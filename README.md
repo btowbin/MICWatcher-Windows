@@ -1,152 +1,107 @@
-# Microscope acquisition watcher
+# MICWatcher for Windows
 
-A dependency-free Python program for monitoring long-running microscope acquisitions. It checks whether new or updated files appear, emails a warning after each inactive interval, sends a recovery notice when acquisition resumes, and sends a disk/file-count report every 24 hours.
+MICWatcher monitors long-running microscope acquisitions on Windows. It checks whether new or updated files continue to appear, emails at most two warnings during an interruption, reports when acquisition resumes, and sends a daily disk-space and file-count report.
 
-Each microscope runs its own copy with its own name, acquisition folder, interval, recipients, and persistent state.
+It can optionally move stable files to a network folder. Each file is copied and verified before its local copy is deleted. Transfer failures generate one warning, followed by silence until a successful transfer produces a recovery email.
+
+This is the Windows edition of [MICWatcher](https://github.com/btowbin/MICWatcher). For Ubuntu microscope computers, use the original repository.
 
 ## Requirements
 
-- Ubuntu Linux
+- Windows 10 or Windows 11
 - Python 3.10 or newer
-- A Gmail account with 2-Step Verification and a generated app password
+- Read access to the microscope acquisition folder
+- Write access to the transfer destination, if transfer is enabled
+- A Gmail account with 2-Step Verification and a Google app password
 
-No third-party Python packages or administrator rights are required when Python is installed and the current user can read the acquisition folder.
+MICWatcher has no third-party Python dependencies. Administrator rights are not required when Python and Git are already available to the Windows user.
 
-## Download and configure
+## Install
 
-Once this repository is published, run on the microscope computer:
+Open PowerShell and run:
 
-```bash
-git clone REPOSITORY_URL microscope-watcher
-cd microscope-watcher
-cp watcher_config.example.json watcher_config.json
-nano watcher_config.json
+```powershell
+cd $HOME
+git clone https://github.com/btowbin/MICWatcher-Windows.git
+cd MICWatcher-Windows
+Copy-Item watcher_config.example.json watcher_config.json
+notepad watcher_config.json
 ```
 
-Configure:
+In `watcher_config.json`, set these once for that microscope:
 
-- `microscope_name`: a unique, recognizable microscope name.
-- `watch_folder`: the Linux acquisition path, for example `/data/acquisition/images`.
-- `check_interval_seconds`: longer than the normal maximum gap between images.
-- `username` and `from_address`: the watcher Gmail address.
-- `password`: the generated Google app password.
-- `to_addresses`: one or more alert recipients.
-- `transfer.enabled`: set to `true` to move stable new files to network storage.
-- `transfer.destination_folder`: the mounted network-drive destination for this microscope.
-- `transfer.check_interval_seconds`: how often transfer candidates are checked, independently of acquisition alarms.
-- `transfer.stable_for_seconds`: how long a file must remain unchanged before copying.
-- `transfer.max_files_per_check`: optional per-check limit; `null` means no limit.
-- `transfer.max_untransferred_files`: backlog safety limit; the default is 10,000.
+- `microscope_name`: a recognizable microscope name.
+- `email.username`: the Gmail address used to send alerts.
+- `email.password`: the 16-character Google app password, without spaces.
+- `email.from_address`: the same Gmail address.
 
-Keep the Gmail SMTP settings as supplied in the example. Protect the local configuration containing the app password:
+The launcher asks for the experiment-specific recipient, local folder, intervals, and optional transfer destination each time it starts. `watcher_config.json` is excluded from Git and is not overwritten by updates.
 
-```bash
-chmod 600 watcher_config.json
+## Install the desktop launcher
+
+Run once from the repository folder:
+
+```powershell
+python install_windows_launcher.py
 ```
 
-`watcher_config.json` is excluded from Git, so local credentials and microscope-specific settings are never committed or overwritten by updates.
+This creates **MICWatcher.cmd** on the current user's Desktop and in the Start menu. Double-click it to configure and start monitoring. The launcher opens a terminal window; leave it open while the experiment is running and press Ctrl+C to stop.
 
-## Verify the configuration
+The default missing-file interval is 60 minutes. The default transfer interval is 30 minutes. There is intentionally no default transfer destination.
 
-Print emails without sending them:
+See [WINDOWS_LAUNCHER_GUIDE.md](WINDOWS_LAUNCHER_GUIDE.md) for the complete operator workflow and instructions for copying local and network folder paths from File Explorer.
 
-```bash
-python3 microscope_watcher.py --once --dry-run
+## Network transfer
+
+In File Explorer, enter this UNC address in the address bar:
+
+```text
+\\izbkingston.unibe.ch\towbin.data
+```
+
+Navigate to or create the experiment's destination folder, click the address bar, and copy the complete path. Paste that path into the launcher. A mapped drive path such as `Z:\MicroscopeData\Experiment1` also works, but it must remain connected for the whole experiment.
+
+Files present when MICWatcher starts are included. A file must remain unchanged for `stable_for_seconds` before it is transferred. The destination preserves the directory structure relative to the watched folder.
+
+If a copy or local deletion fails, the source is retained. One transfer-failure email is sent, repeated failures remain silent, and a recovery email is sent after a later successful transfer. If more than 10,000 files remain untransferred, MICWatcher sends a safety-stop email and exits without deleting them.
+
+## Test the configuration
+
+Print email messages without sending them:
+
+```powershell
+python microscope_watcher.py --once --dry-run
 ```
 
 Send a real test email:
 
-```bash
-python3 microscope_watcher.py --test-email
+```powershell
+python microscope_watcher.py --test-email
 ```
 
-The first real check establishes a baseline and does not send an inactivity warning. It does send the initial daily report. A file counts as activity when the folder's file count increases or the newest file's modification time advances; this also recognizes acquisition formats that continually append to one file.
+## Operation
 
-## Optional network transfer
+- At most two inactivity warnings are sent for one interruption.
+- No further inactivity warnings are sent until files appear again; recovery produces one email.
+- The daily report includes file count, disk space, and transfer status.
+- `microscope_watcher.log` records operation and errors.
+- `watcher_state.json` preserves alert and report state across restarts.
+- Existing stable files are transferred when transfer is enabled.
+- There is no default limit on the number of files transferred per check.
 
-Mount the network drive through Ubuntu first, then enable transfer in `watcher_config.json`:
+## Update
 
-```json
-"transfer": {
-  "enabled": true,
-  "destination_folder": "/mnt/network-drive/microscope-1",
-  "check_interval_seconds": 300,
-  "stable_for_seconds": 60,
-  "max_files_per_check": null,
-  "max_untransferred_files": 10000
-}
-```
+The desktop launcher does not need to be reinstalled after an ordinary update:
 
-Files already present when MICWatcher starts are included, as are files created later. A candidate must be unchanged across checks for at least `stable_for_seconds`. The watcher preserves its path relative to the acquisition folder, copies its contents through a bounded buffer to a `.micwatcher-part` file, confirms that the source did not change and that sizes match, finalizes the destination, and only then deletes the local source. It does not attempt to copy Unix metadata, which keeps it compatible with GVFS/FUSE network mounts.
-
-If copying or local deletion fails, the source is retained and one warning email is sent. Repeated failures remain silent. A single recovery email is sent after a later file transfers successfully. The daily report includes transfer status, pending count, total transferred count, last success, and any active error.
-
-Use a destination unique to each microscope. The destination must not be inside the watched folder. By default there is no per-check transfer count limit, so every stable candidate is processed. A numeric `max_files_per_check` can still be configured when deliberate throttling is needed.
-
-If the number of untransferred local files exceeds `max_untransferred_files` (10,000 by default), MICWatcher sends a `[SAFETY STOP]` email, saves its state, retains every local file, and exits. Resolve the network or backlog problem before restarting it.
-
-## Install the desktop launcher
-
-Install it once for the current Ubuntu account; administrator rights are not required:
-
-```bash
-cd ~/MICWatcher
-python3 install_desktop_launcher.py
-```
-
-Double-click **MICWatcher** on the desktop, or open it from the Applications menu. A terminal asks for the alert email, local acquisition folder, missing-file check interval, whether transfer is enabled, and—when enabled—the mounted destination and transfer-check interval. Existing Gmail credentials and microscope identity remain unchanged. Press Enter to start, leave the terminal open, and use Ctrl+C to stop.
-
-The missing-file check defaults to 60 minutes, the transfer check defaults to 30 minutes, and the transfer destination has no default. See [LAUNCHER_GUIDE.md](LAUNCHER_GUIDE.md) for the complete illustrated operator workflow, including obtaining local and network paths from Ubuntu Files.
-
-Run the installer again after moving the repository to another path. If Ubuntu marks the desktop icon untrusted, right-click it and select **Allow Launching**.
-
-## Start and stop manually
-
-Start the watcher when an experiment begins:
-
-```bash
-cd ~/microscope-watcher
-python3 microscope_watcher.py
-```
-
-Keep the terminal open. Stop it with Ctrl+C.
-
-To let it continue after closing the terminal:
-
-```bash
-cd ~/microscope-watcher
-nohup python3 microscope_watcher.py > watcher-console.log 2>&1 &
-echo $! > watcher.pid
-```
-
-Stop that background process with:
-
-```bash
-kill "$(cat ~/microscope-watcher/watcher.pid)"
-```
-
-## Operations
-
-- `microscope_watcher.log` records activity and email failures.
-- `watcher_state.json` preserves activity, alert, and report state across restarts.
-- At most two inactivity warnings are sent for one interruption. Further checks remain silent until a recovery email reports that files are appearing again.
-- A separate warning is sent when the acquisition folder cannot be read.
-- Failed email delivery is retried on a later check.
-- The daily report gives file count and free/total disk space.
-- When enabled, network-transfer health and progress are included in the daily report.
-- Temporarily lower `daily_report_interval_hours` to test daily reporting.
-
-## Update an installed copy
-
-Local configuration is preserved during updates:
-
-```bash
-cd ~/microscope-watcher
+```powershell
+cd $HOME\MICWatcher-Windows
 git pull
 ```
 
-## Run automated tests
+Run the installer again only if the repository or Python installation has moved.
 
-```bash
-python3 -m unittest discover -s tests -v
+## Run tests
+
+```powershell
+python -m unittest discover -s tests -v
 ```

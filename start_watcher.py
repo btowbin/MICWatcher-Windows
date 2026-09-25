@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import msvcrt
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from microscope_watcher import load_config, main as watcher_main
 
@@ -16,6 +16,7 @@ from microscope_watcher import load_config, main as watcher_main
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "watcher_config.json"
 EXAMPLE_CONFIG_PATH = ROOT / "watcher_config.example.json"
+INSTANCE_LOCK_PATH = ROOT / ".micwatcher.lock"
 
 
 def prompt_text(label: str, default: str = "") -> str:
@@ -58,18 +59,20 @@ def expanded_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
 
 
-def running_watcher() -> str | None:
+def acquire_instance_lock() -> BinaryIO | None:
+    """Hold an exclusive byte-range lock while this launcher is running."""
+    handle = INSTANCE_LOCK_PATH.open("a+b")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"\0")
+        handle.flush()
+    handle.seek(0)
     try:
-        result = subprocess.run(
-            ["pgrep", "-af", "microscope_watcher.py"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
         return None
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    return "\n".join(lines) if lines else None
+    return handle
 
 
 def load_editable_config() -> dict[str, Any]:
@@ -90,7 +93,7 @@ def save_config(config: dict[str, Any]) -> None:
 
 def configure() -> bool:
     config = load_editable_config()
-    original_watch_folder = expanded_path(str(config.get("watch_folder", "/data")))
+    original_watch_folder = expanded_path(str(config.get("watch_folder", Path.home())))
     email = config.setdefault("email", {})
     recipients = email.get("to_addresses") or [""]
     current_recipient = recipients[0] if isinstance(recipients, list) else str(recipients)
@@ -104,7 +107,7 @@ def configure() -> bool:
         recipient = prompt_text("Alert email address", current_recipient)
 
     watch_folder = expanded_path(
-        prompt_text("Local acquisition folder", str(config.get("watch_folder", "/data")))
+        prompt_text("Local acquisition folder", str(config.get("watch_folder", Path.home())))
     )
     if not watch_folder.is_dir():
         print(f"\nCannot start: local folder does not exist: {watch_folder}")
@@ -183,10 +186,10 @@ def configure() -> bool:
 
 
 def main() -> int:
-    existing = running_watcher()
-    if existing:
-        print("MICWatcher is already running. Stop it before starting another copy:\n")
-        print(existing)
+    instance_lock = acquire_instance_lock()
+    if instance_lock is None:
+        print("MICWatcher is already running from this installation.")
+        print("Stop it before starting another copy.")
         input("\nPress Enter to close this window.")
         return 1
     try:
@@ -202,6 +205,8 @@ def main() -> int:
         print(f"\nSetup failed: {exc}")
         input("Press Enter to close this window.")
         return 2
+    finally:
+        instance_lock.close()
 
 
 if __name__ == "__main__":

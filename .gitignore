@@ -5,5 +5,6 @@ watcher_state.json.previous
 microscope_watcher.log
 watcher-console.log
 watcher.pid
+.micwatcher.lock
 __pycache__/
 *.pyc

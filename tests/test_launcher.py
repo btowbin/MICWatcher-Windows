@@ -5,15 +5,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 import start_watcher
-import install_desktop_launcher
+import install_windows_launcher
 
 
 class LauncherTests(unittest.TestCase):
-    def test_desktop_launcher_opens_terminal(self):
-        contents = install_desktop_launcher.launcher_contents()
-        self.assertIn("Name=MICWatcher", contents)
-        self.assertIn("Terminal=true", contents)
+    def test_windows_launcher_opens_terminal(self):
+        contents = install_windows_launcher.launcher_contents()
+        self.assertIn("@echo off", contents)
+        self.assertIn("title MICWatcher", contents)
         self.assertIn("start_watcher.py", contents)
+        self.assertIn("pause", contents)
+
+    def test_instance_lock_prevents_a_second_launcher(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            lock_path = Path(temporary) / ".micwatcher.lock"
+            with patch.object(start_watcher, "INSTANCE_LOCK_PATH", lock_path):
+                first = start_watcher.acquire_instance_lock()
+                self.assertIsNotNone(first)
+                try:
+                    self.assertIsNone(start_watcher.acquire_instance_lock())
+                finally:
+                    assert first is not None
+                    first.close()
 
     def test_configure_updates_operator_fields_and_preserves_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
