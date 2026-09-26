@@ -396,10 +396,15 @@ class Watcher:
         self.state = load_state(config.state_file)
         configured_watch = str(config.watch_folder.resolve())
         previous_watch = self.state.get("configured_watch_folder")
-        if previous_watch is not None and previous_watch != configured_watch:
-            LOG.info("Watched folder changed; resetting monitor and transfer state")
+        configured_name = config.microscope_name
+        previous_name = self.state.get("configured_microscope_name")
+        if previous_watch != configured_watch or previous_name != configured_name:
+            LOG.info(
+                "Experiment name or watched folder changed; resetting monitor and transfer state"
+            )
             self.state = {}
         self.state["configured_watch_folder"] = configured_watch
+        self.state["configured_microscope_name"] = configured_name
         configured_destination = (
             str(config.transfer.destination_folder.resolve())
             if config.transfer.destination_folder is not None

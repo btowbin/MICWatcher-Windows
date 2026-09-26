@@ -59,6 +59,8 @@ The GUI contains:
 
 Review the settings, then click **Start monitoring**.
 
+Use a new name for every new experiment, even when the same acquisition folder is reused. A changed name or folder resets the warning state. Restarting the same experiment with the same name and folder retains its warning state so that duplicate alerts are not sent.
+
 ## While MICWatcher is running
 
 - Leave the MICWatcher window open.

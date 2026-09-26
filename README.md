@@ -47,6 +47,8 @@ Windows displays a User Account Control prompt because the installer creates a m
 
 The graphical launcher asks for the experiment/microscope name, recipient, local folder, intervals, and optional transfer destination each time it starts. The chosen name is used in email subjects, email reports, and SMS warnings. The shared configuration is not overwritten by updates.
 
+Changing either the experiment/microscope name or the acquisition folder starts fresh warning and daily-report state. Reopening the same experiment with the same name and folder preserves its state, preventing duplicate warnings after an accidental restart.
+
 ## Install the graphical launcher
 
 Run once from the repository folder if it was not already run during the installation steps:
