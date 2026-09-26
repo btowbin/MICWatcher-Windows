@@ -6,10 +6,11 @@ This guide is for microscope operators. The Gmail sender account and all-users l
 
 1. Start the microscopy experiment normally and confirm that it is saving images.
 2. Double-click **MICWatcher** on the Desktop or open **MICWatcher** from the Start menu.
-3. Enter the alert email address.
-4. If an SMS warning is wanted, select **Send one SMS for each new warning** and enter the recipient's telephone number in international format, for example `+41791234567`. Sending an SMS has a small per-message cost.
-5. Next to **Local acquisition folder**, click **Browse...**.
-6. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
+3. Enter a descriptive **Experiment / microscope name**, for example `SQUID 2 - lifespan experiment 2026-09-26`. This name appears in all email subjects, reports, and SMS warnings.
+4. Enter the alert email address.
+5. If an SMS warning is wanted, select **Send one SMS for each new warning** and enter the recipient's telephone number in international format, for example `+41791234567`. Sending an SMS has a small per-message cost.
+6. Next to **Local acquisition folder**, click **Browse...**.
+7. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
 
 You can alternatively open the local folder in File Explorer, click the address bar or press Ctrl+L, copy the path with Ctrl+C, and paste it into the MICWatcher path field with Ctrl+V.
 
@@ -46,14 +47,15 @@ Use a separate destination for each microscope. The destination cannot be inside
 
 The GUI contains:
 
-1. **Alert email address** — the user who should receive warnings and reports.
-2. **Send one SMS for each new warning** — optional; SMS has a small per-message cost.
-3. **SMS recipient number** — required only when SMS is enabled; use international format such as `+41791234567`.
-4. **Local acquisition folder** — type, paste, or browse to the experiment folder.
-5. **Missing-file check** — 60 minutes by default.
-6. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
-7. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
-8. **Transfer check** — 30 minutes by default.
+1. **Experiment / microscope name** — identifies the experiment and microscope in every notification.
+2. **Alert email address** — the user who should receive warnings and reports.
+3. **Send one SMS for each new warning** — optional; SMS has a small per-message cost.
+4. **SMS recipient number** — required only when SMS is enabled; use international format such as `+41791234567`.
+5. **Local acquisition folder** — type, paste, or browse to the experiment folder.
+6. **Missing-file check** — 60 minutes by default.
+7. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
+8. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
+9. **Transfer check** — 30 minutes by default.
 
 Review the settings, then click **Start monitoring**.
 

@@ -93,6 +93,9 @@ class LauncherTests(unittest.TestCase):
                 True,
                 str(destination),
                 "30",
+                False,
+                "",
+                "Experiment 42 / SQUID 2",
             )
             existing = {
                 "watch_folder": "old",
@@ -104,6 +107,7 @@ class LauncherTests(unittest.TestCase):
                 "transfer": {"max_files_per_check": None},
             }
             updated = micwatcher_gui.apply_operator_settings(existing, settings)
+            self.assertEqual("Experiment 42 / SQUID 2", updated["microscope_name"])
             self.assertEqual("secret", updated["email"]["password"])
             self.assertEqual(["operator@example.org"], updated["email"]["to_addresses"])
             self.assertEqual(3600, updated["check_interval_seconds"])
@@ -157,6 +161,33 @@ class LauncherTests(unittest.TestCase):
                     "30",
                     True,
                     "079 123 45 67",
+                )
+
+    def test_experiment_name_is_required_and_must_be_one_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "experiment or microscope name"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org",
+                    temporary,
+                    "60",
+                    False,
+                    "",
+                    "30",
+                    False,
+                    "",
+                    "   ",
+                )
+            with self.assertRaisesRegex(ValueError, "one line"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org",
+                    temporary,
+                    "60",
+                    False,
+                    "",
+                    "30",
+                    False,
+                    "",
+                    "Scope A\nInjected subject",
                 )
 
     def test_instance_lock_prevents_a_second_launcher(self):

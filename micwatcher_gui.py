@@ -42,6 +42,7 @@ class OperatorSettings:
     transfer_interval_seconds: float
     sms_enabled: bool
     sms_to_number: str
+    microscope_name: str
 
 
 def normalized_path(value: str) -> Path:
@@ -71,7 +72,16 @@ def validate_operator_settings(
     transfer_minutes: str,
     sms_enabled: bool = False,
     sms_to_number: str = "",
+    microscope_name: str = "Microscope",
 ) -> OperatorSettings:
+    microscope_name = microscope_name.strip()
+    if not microscope_name:
+        raise ValueError("Enter an experiment or microscope name.")
+    if "\r" in microscope_name or "\n" in microscope_name:
+        raise ValueError("The experiment or microscope name must fit on one line.")
+    if len(microscope_name) > 100:
+        raise ValueError("The experiment or microscope name must be 100 characters or fewer.")
+
     recipient = recipient.strip()
     if "@" not in recipient or recipient.startswith("@") or recipient.endswith("@"):
         raise ValueError("Enter a valid alert email address.")
@@ -117,6 +127,7 @@ def validate_operator_settings(
         transfer_seconds,
         sms_enabled,
         phone_number,
+        microscope_name,
     )
 
 
@@ -127,6 +138,7 @@ def apply_operator_settings(
     email = config.setdefault("email", {})
     transfer = config.setdefault("transfer", {})
     sms = config.setdefault("sms", {})
+    config["microscope_name"] = settings.microscope_name
     email["to_addresses"] = [settings.recipient]
     config["watch_folder"] = str(settings.watch_folder)
     config["check_interval_seconds"] = settings.acquisition_interval_seconds
@@ -286,6 +298,9 @@ class MICWatcherApp:
         sms = config.get("sms", {})
 
         self.recipient = tk.StringVar(value=recipient)
+        self.microscope_name = tk.StringVar(
+            value=str(config.get("microscope_name", "Microscope"))
+        )
         self.watch_folder = tk.StringVar(value=str(config.get("watch_folder", "")))
         self.acquisition_minutes = tk.StringVar(value="60")
         self.sms_enabled = tk.BooleanVar(value=bool(sms.get("enabled", False)))
@@ -337,11 +352,18 @@ class MICWatcherApp:
         form.grid(row=2, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
 
-        ttk.Label(form, text="Alert email address").grid(
+        ttk.Label(form, text="Experiment / microscope name").grid(
             row=0, column=0, sticky="w", padx=(0, 10), pady=6
         )
+        microscope_entry = ttk.Entry(form, textvariable=self.microscope_name)
+        microscope_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=6)
+        self.form_widgets.append(microscope_entry)
+
+        ttk.Label(form, text="Alert email address").grid(
+            row=1, column=0, sticky="w", padx=(0, 10), pady=6
+        )
         recipient_entry = ttk.Entry(form, textvariable=self.recipient)
-        recipient_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=6)
+        recipient_entry.grid(row=1, column=1, columnspan=2, sticky="ew", pady=6)
         self.form_widgets.append(recipient_entry)
 
         sms_check = ttk.Checkbutton(
@@ -350,26 +372,26 @@ class MICWatcherApp:
             variable=self.sms_enabled,
             command=self.update_sms_controls,
         )
-        sms_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        sms_check.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 4))
         self.form_widgets.append(sms_check)
 
         ttk.Label(form, text="SMS recipient number").grid(
-            row=2, column=0, sticky="w", padx=(0, 10), pady=6
+            row=3, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.sms_number_entry = ttk.Entry(form, textvariable=self.sms_to_number)
-        self.sms_number_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=6)
+        self.sms_number_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=6)
         self.form_widgets.append(self.sms_number_entry)
 
         self.add_path_row(
-            form, 3, "Local acquisition folder", self.watch_folder, self.browse_source
+            form, 4, "Local acquisition folder", self.watch_folder, self.browse_source
         )
 
         ttk.Label(form, text="Missing-file check").grid(
-            row=4, column=0, sticky="w", padx=(0, 10), pady=6
+            row=5, column=0, sticky="w", padx=(0, 10), pady=6
         )
         acquisition_entry = ttk.Entry(form, textvariable=self.acquisition_minutes, width=12)
-        acquisition_entry.grid(row=4, column=1, sticky="w", pady=6)
-        ttk.Label(form, text="minutes").grid(row=4, column=1, sticky="w", padx=(90, 0))
+        acquisition_entry.grid(row=5, column=1, sticky="w", pady=6)
+        ttk.Label(form, text="minutes").grid(row=5, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(acquisition_entry)
 
         transfer_check = ttk.Checkbutton(
@@ -378,27 +400,27 @@ class MICWatcherApp:
             variable=self.transfer_enabled,
             command=self.update_transfer_controls,
         )
-        transfer_check.grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        transfer_check.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 4))
         self.form_widgets.append(transfer_check)
 
         ttk.Label(form, text="Transfer destination").grid(
-            row=6, column=0, sticky="w", padx=(0, 10), pady=6
+            row=7, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.destination_entry = ttk.Entry(form, textvariable=self.destination_folder)
-        self.destination_entry.grid(row=6, column=1, sticky="ew", pady=6)
+        self.destination_entry.grid(row=7, column=1, sticky="ew", pady=6)
         self.destination_button = ttk.Button(
             form, text="Browse...", command=self.browse_destination
         )
-        self.destination_button.grid(row=6, column=2, padx=(8, 0), pady=6)
+        self.destination_button.grid(row=7, column=2, padx=(8, 0), pady=6)
         self.form_widgets.extend([self.destination_entry, self.destination_button])
 
         ttk.Label(form, text="Transfer check").grid(
-            row=7, column=0, sticky="w", padx=(0, 10), pady=6
+            row=8, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.transfer_entry = ttk.Entry(form, textvariable=self.transfer_minutes, width=12)
-        self.transfer_entry.grid(row=7, column=1, sticky="w", pady=6)
+        self.transfer_entry.grid(row=8, column=1, sticky="w", pady=6)
         self.transfer_unit = ttk.Label(form, text="minutes")
-        self.transfer_unit.grid(row=7, column=1, sticky="w", padx=(90, 0))
+        self.transfer_unit.grid(row=8, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(self.transfer_entry)
 
         status_frame = ttk.LabelFrame(outer, text="Status", padding=12)
@@ -478,6 +500,7 @@ class MICWatcherApp:
                 self.transfer_minutes.get(),
                 self.sms_enabled.get(),
                 self.sms_to_number.get(),
+                self.microscope_name.get(),
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Cannot start MICWatcher", str(exc), parent=self.root)

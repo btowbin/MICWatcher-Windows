@@ -32,9 +32,8 @@ notepad watcher_config.json
 python install_windows_launcher.py
 ```
 
-In `watcher_config.json`, set these once for that microscope:
+In `watcher_config.json`, set the sender credentials once for the installation:
 
-- `microscope_name`: a recognizable microscope name.
 - `email.username`: the Gmail address used to send alerts.
 - `email.password`: the 16-character Google app password, without spaces.
 - `email.from_address`: the same Gmail address.
@@ -46,7 +45,7 @@ Leave `sms.enabled` set to `false` in the shared file. Operators enable SMS and 
 
 Windows displays a User Account Control prompt because the installer creates a machine-wide installation. Approve it using an administrator account. The installer copies the program to `C:\Program Files\MICWatcher`, stores the shared configuration and runtime data in `C:\ProgramData\MICWatcher`, and creates one launcher for all users.
 
-The graphical launcher asks for the experiment-specific recipient, local folder, intervals, and optional transfer destination each time it starts. The shared configuration is not overwritten by updates.
+The graphical launcher asks for the experiment/microscope name, recipient, local folder, intervals, and optional transfer destination each time it starts. The chosen name is used in email subjects, email reports, and SMS warnings. The shared configuration is not overwritten by updates.
 
 ## Install the graphical launcher
 
@@ -60,6 +59,7 @@ This creates a **MICWatcher** shortcut on the Public Desktop and in the common S
 
 Operators can:
 
+- Enter an experiment or microscope name that identifies every notification.
 - Enter the alert recipient.
 - Optionally enable one-shot warning SMS and enter a phone number in international format.
 - Type a folder path or select it with **Browse...**.
