@@ -9,8 +9,9 @@ This guide is for microscope operators. The Gmail sender account and all-users l
 3. Enter a descriptive **Experiment / microscope name**, for example `SQUID 2 - lifespan experiment 2026-09-26`. This name appears in all email subjects, reports, and SMS warnings.
 4. Enter the alert email address.
 5. If an SMS warning is wanted, select **Send one SMS for each new warning** and enter the recipient's telephone number in international format, for example `+41791234567`. Sending an SMS has a small per-message cost.
-6. Next to **Local acquisition folder**, click **Browse...**.
-7. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
+6. If Telegram reporting is wanted, select **Send warnings to the configured Telegram channel**. The administrator must configure the bot and channel first.
+7. Next to **Local acquisition folder**, click **Browse...**.
+8. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
 
 You can alternatively open the local folder in File Explorer, click the address bar or press Ctrl+L, copy the path with Ctrl+C, and paste it into the MICWatcher path field with Ctrl+V.
 
@@ -51,11 +52,12 @@ The GUI contains:
 2. **Alert email address** — the user who should receive warnings and reports.
 3. **Send one SMS for each new warning** — optional; SMS has a small per-message cost.
 4. **SMS recipient number** — required only when SMS is enabled; use international format such as `+41791234567`.
-5. **Local acquisition folder** — type, paste, or browse to the experiment folder.
-6. **Missing-file check** — 60 minutes by default.
-7. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
-8. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
-9. **Transfer check** — 30 minutes by default.
+5. **Send warnings to the configured Telegram channel** — optional; the administrator configures the bot and channel.
+6. **Local acquisition folder** — type, paste, or browse to the experiment folder.
+7. **Missing-file check** — 60 minutes by default.
+8. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
+9. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
+10. **Transfer check** — 30 minutes by default.
 
 Review the settings, then click **Start monitoring**.
 
@@ -89,6 +91,13 @@ Every click on **Start monitoring** starts a new monitoring run with fresh warni
 - The second missing-file email, repeated failures, recoveries, daily reports, and routine status updates do not send SMS.
 - SMS contains only a short warning and asks the recipient to read the email for details.
 - While using a Twilio trial account, the recipient number must first be verified in the Twilio Console.
+
+## Telegram behavior
+
+- Telegram is optional and has no MICWatcher per-message charge.
+- It follows the same first-warning-only policy as SMS: one message for a new missing-file incident and one for a new transfer-failure incident.
+- Second warnings, recoveries, daily reports, safety stops, and routine status updates are not sent to Telegram.
+- Telegram failures are written to the log and do not stop email, SMS, monitoring, or file transfer.
 
 ## Troubleshooting
 

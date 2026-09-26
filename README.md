@@ -6,6 +6,8 @@ It can optionally move stable files to a network folder. Each file is copied and
 
 It can also send one optional Twilio SMS when a new acquisition interruption or transfer failure is first detected. SMS is not used for second email warnings, recoveries, daily reports, or routine status messages.
 
+It can optionally send the same first warning to a Telegram channel through an administrator-configured bot.
+
 This is the Windows edition of [MICWatcher](https://github.com/btowbin/MICWatcher). For Ubuntu microscope computers, use the original repository.
 
 ## Requirements
@@ -16,6 +18,7 @@ This is the Windows edition of [MICWatcher](https://github.com/btowbin/MICWatche
 - Write access to the transfer destination, if transfer is enabled
 - A Gmail account with 2-Step Verification and a Google app password
 - For optional SMS alerts: a Twilio account, an SMS-capable Twilio sender number, and a verified recipient number while the account is in trial mode
+- For optional Telegram alerts: a Telegram bot that is an administrator of the reporting channel
 
 MICWatcher has no third-party Python dependencies. Administrator approval is required once during installation or an update. Operators do not need administrator rights afterward.
 
@@ -40,12 +43,16 @@ In `watcher_config.json`, set the sender credentials once for the installation:
 - `sms.account_sid`: the Twilio Account SID beginning with `AC`.
 - `sms.auth_token`: the Twilio Auth Token. Treat it like a password.
 - `sms.from_number`: the SMS-capable Twilio phone number in international format, such as `+15017122661`.
+- `telegram.bot_token`: the token issued by Telegram's `@BotFather`. Treat it like a password.
+- `telegram.chat_id`: `@channelusername` for a public channel, or the numeric Bot API channel ID (normally beginning with `-100`) for a private channel.
 
 Leave `sms.enabled` set to `false` in the shared file. Operators enable SMS and enter the experiment recipient in the GUI. The GUI stores the normalized recipient in `sms.to_number`. A Twilio trial account can send only to recipient numbers verified in the Twilio Console. Twilio charges a small amount for each SMS attempt after trial credit is used.
 
+Add the Telegram bot to the channel as an administrator with permission to post. Leave `telegram.enabled` set to `false` in the shared file; operators can enable the configured channel in the GUI. The token may alternatively be stored in the environment variable named by `telegram.bot_token_env`.
+
 Windows displays a User Account Control prompt because the installer creates a machine-wide installation. Approve it using an administrator account. The installer copies the program to `C:\Program Files\MICWatcher`, stores the shared configuration and runtime data in `C:\ProgramData\MICWatcher`, and creates one launcher for all users.
 
-The graphical launcher asks for the experiment/microscope name, recipient, local folder, intervals, and optional transfer destination each time it starts. The chosen name is used in email subjects, email reports, and SMS warnings. The shared configuration is not overwritten by updates.
+The graphical launcher asks for the experiment/microscope name, recipient, notification options, local folder, intervals, and optional transfer destination each time it starts. The chosen name is used in email subjects, email reports, SMS warnings, and Telegram warnings. The shared configuration is not overwritten by updates.
 
 Every click on **Start monitoring** begins with fresh runtime state, including after Stop/Start or a complete application relaunch. Warning counts, transfer-failure suppression, daily-report timing, transfer-stability tracking, and session counters do not carry over, even when the same experiment name and folders are reused.
 
@@ -64,6 +71,7 @@ Operators can:
 - Enter an experiment or microscope name that identifies every notification.
 - Enter the alert recipient.
 - Optionally enable one-shot warning SMS and enter a phone number in international format.
+- Optionally enable warnings to the administrator-configured Telegram channel.
 - Type a folder path or select it with **Browse...**.
 - Set the missing-file and transfer intervals.
 - Enable or disable network transfer.
@@ -108,12 +116,15 @@ python microscope_watcher.py --config "$env:ProgramData\MICWatcher\watcher_confi
 
 There is intentionally no automatic test SMS: enabling SMS sends messages only for a real first acquisition or transfer warning, limiting accidental paid messages.
 
+Telegram also sends only for a real first acquisition or transfer warning. A Telegram error is logged and never interrupts email, SMS, monitoring, or transfer.
+
 ## Operation
 
 - At most two inactivity warnings are sent for one interruption.
 - When SMS is enabled, only the first inactivity warning sends an SMS.
 - A transfer failure sends one SMS when first detected; repeated failures and recovery do not send SMS.
 - Daily reports and routine updates never send SMS.
+- Telegram follows the same first-warning-only policy as SMS, and Telegram failures are not retried for the same incident.
 - No further inactivity warnings are sent until files appear again; recovery produces one email.
 - The daily report includes file count, disk space, and transfer status.
 - `C:\ProgramData\MICWatcher\microscope_watcher.log` records operation and errors.

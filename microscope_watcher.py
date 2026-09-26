@@ -77,6 +77,15 @@ class SmsConfig:
 
 
 @dataclass(frozen=True)
+class TelegramConfig:
+    enabled: bool
+    bot_token_env: str
+    bot_token: str
+    chat_id: str
+    timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class Config:
     microscope_name: str
     watch_folder: Path
@@ -87,6 +96,7 @@ class Config:
     log_file: Path
     email: EmailConfig
     sms: SmsConfig
+    telegram: TelegramConfig
     transfer: "TransferConfig"
 
 
@@ -157,6 +167,7 @@ def load_config(path: Path) -> Config:
 
     transfer = raw.get("transfer", {})
     sms = raw.get("sms", {})
+    telegram = raw.get("telegram", {})
     transfer_enabled = bool(transfer.get("enabled", False))
     destination_value = str(transfer.get("destination_folder", "")).strip()
     batch_limit_value = transfer.get("max_files_per_check")
@@ -191,6 +202,15 @@ def load_config(path: Path) -> Config:
             to_number=str(sms.get("to_number", "")).strip(),
             timeout_seconds=float(sms.get("timeout_seconds", 30)),
         ),
+        telegram=TelegramConfig(
+            enabled=bool(telegram.get("enabled", False)),
+            bot_token_env=str(
+                telegram.get("bot_token_env", "MICWATCHER_TELEGRAM_BOT_TOKEN")
+            ),
+            bot_token=str(telegram.get("bot_token", "")),
+            chat_id=str(telegram.get("chat_id", "")).strip(),
+            timeout_seconds=float(telegram.get("timeout_seconds", 30)),
+        ),
         transfer=TransferConfig(
             enabled=transfer_enabled,
             destination_folder=config_path(destination_value) if destination_value else None,
@@ -220,6 +240,20 @@ def load_config(path: Path) -> Config:
             raise ValueError("sms.to_number must use international format, for example +41791234567")
         if result.sms.timeout_seconds <= 0:
             raise ValueError("sms.timeout_seconds must be greater than zero")
+    if result.telegram.enabled:
+        token = result.telegram.bot_token or os.environ.get(
+            result.telegram.bot_token_env, ""
+        )
+        if not token or token.startswith("PASTE_"):
+            raise ValueError(
+                "telegram.bot_token is required when Telegram alerts are enabled"
+            )
+        if not result.telegram.chat_id:
+            raise ValueError(
+                "telegram.chat_id is required when Telegram alerts are enabled"
+            )
+        if result.telegram.timeout_seconds <= 0:
+            raise ValueError("telegram.timeout_seconds must be greater than zero")
     if result.transfer.enabled and result.transfer.destination_folder is None:
         raise ValueError("transfer.destination_folder is required when transfer is enabled")
     if result.transfer.stable_for_seconds < 0:
@@ -370,6 +404,56 @@ class SmsSender:
             raise RuntimeError(f"Twilio returned HTTP {exc.code}: {detail}") from exc
 
 
+class TelegramSender:
+    """Send warning messages to a Telegram chat or channel through a bot."""
+
+    def __init__(self, config: TelegramConfig, dry_run: bool = False):
+        self.config = config
+        self.dry_run = dry_run
+
+    def send(self, body: str) -> None:
+        if not self.config.enabled:
+            return
+        if self.dry_run:
+            LOG.info("DRY RUN Telegram\nChat: %s\n\n%s", self.config.chat_id, body)
+            return
+
+        bot_token = self.config.bot_token or os.environ.get(
+            self.config.bot_token_env, ""
+        )
+        if not bot_token:
+            raise RuntimeError("No Telegram bot token is configured")
+        endpoint = (
+            "https://api.telegram.org/bot"
+            f"{urllib.parse.quote(bot_token, safe=':')}/sendMessage"
+        )
+        payload = urllib.parse.urlencode(
+            {"chat_id": self.config.chat_id, "text": body}
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.config.timeout_seconds
+            ) as response:
+                response_body = response.read(4096).decode("utf-8", errors="replace")
+                if response.status < 200 or response.status >= 300:
+                    raise RuntimeError(f"Telegram returned HTTP {response.status}")
+                try:
+                    result = json.loads(response_body)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError("Telegram returned an invalid response") from exc
+                if not result.get("ok", False):
+                    raise RuntimeError(f"Telegram rejected the message: {response_body}")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(1024).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Telegram returned HTTP {exc.code}: {detail}") from exc
+
+
 class Watcher:
     def __init__(
         self,
@@ -377,11 +461,13 @@ class Watcher:
         mailer: Mailer,
         clock: Callable[[], datetime] = now_local,
         sms_sender: SmsSender | None = None,
+        telegram_sender: TelegramSender | None = None,
     ):
         self.config = config
         self.mailer = mailer
         self.clock = clock
         self.sms_sender = sms_sender
+        self.telegram_sender = telegram_sender
         # A Watcher instance represents one explicit GUI monitoring run. Never
         # inherit warning suppression, report timing, or transfer stability from
         # an earlier run, even when its name and folders are identical.
@@ -416,6 +502,19 @@ class Watcher:
             # SMS is an additional alert channel. A failure must never interrupt
             # monitoring or cause repeated SMS attempts for the same incident.
             LOG.exception("Failed to send warning SMS to %s", self.config.sms.to_number)
+            return False
+
+    def _send_warning_telegram(self, warning: str) -> bool:
+        if self.telegram_sender is None or not self.config.telegram.enabled:
+            return False
+        try:
+            self.telegram_sender.send(warning)
+            LOG.info("Sent Telegram warning to %s", self.config.telegram.chat_id)
+            return True
+        except Exception:
+            LOG.exception(
+                "Failed to send Telegram warning to %s", self.config.telegram.chat_id
+            )
             return False
 
     def _is_activity(self, snapshot: FolderSnapshot) -> bool:
@@ -484,6 +583,10 @@ class Watcher:
             )
             self._send(subject, body)
             self._send_warning_sms(
+                f"MICWatcher {self.config.microscope_name}: file transfer failed. "
+                "Check your email for details."
+            )
+            self._send_warning_telegram(
                 f"MICWatcher {self.config.microscope_name}: file transfer failed. "
                 "Check your email for details."
             )
@@ -695,6 +798,10 @@ class Watcher:
                             f"MICWatcher {self.config.microscope_name}: no new image files. "
                             "Check your email for details."
                         )
+                        self._send_warning_telegram(
+                            f"MICWatcher {self.config.microscope_name}: no new image files. "
+                            "Check your email for details."
+                        )
                     self.state["inactivity_warning_count"] = warning_number
                 self.state["stalled"] = True
 
@@ -808,6 +915,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(config.log_file, args.verbose)
     mailer = Mailer(config.email, dry_run=args.dry_run)
     sms_sender = SmsSender(config.sms, dry_run=args.dry_run)
+    telegram_sender = TelegramSender(config.telegram, dry_run=args.dry_run)
 
     if args.test_email:
         try:
@@ -822,7 +930,12 @@ def main(argv: list[str] | None = None) -> int:
             LOG.exception("Test email failed")
             return 1
 
-    watcher = Watcher(config, mailer, sms_sender=sms_sender)
+    watcher = Watcher(
+        config,
+        mailer,
+        sms_sender=sms_sender,
+        telegram_sender=telegram_sender,
+    )
     if args.once:
         try:
             watcher.check_once()

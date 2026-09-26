@@ -21,6 +21,7 @@ from microscope_watcher import (
     Config,
     Mailer,
     SmsSender,
+    TelegramSender,
     TransferBacklogExceeded,
     Watcher,
     format_timestamp,
@@ -43,6 +44,7 @@ class OperatorSettings:
     sms_enabled: bool
     sms_to_number: str
     microscope_name: str
+    telegram_enabled: bool
 
 
 def normalized_path(value: str) -> Path:
@@ -73,6 +75,7 @@ def validate_operator_settings(
     sms_enabled: bool = False,
     sms_to_number: str = "",
     microscope_name: str = "Microscope",
+    telegram_enabled: bool = False,
 ) -> OperatorSettings:
     microscope_name = microscope_name.strip()
     if not microscope_name:
@@ -128,6 +131,7 @@ def validate_operator_settings(
         sms_enabled,
         phone_number,
         microscope_name,
+        telegram_enabled,
     )
 
 
@@ -138,6 +142,7 @@ def apply_operator_settings(
     email = config.setdefault("email", {})
     transfer = config.setdefault("transfer", {})
     sms = config.setdefault("sms", {})
+    telegram = config.setdefault("telegram", {})
     config["microscope_name"] = settings.microscope_name
     email["to_addresses"] = [settings.recipient]
     config["watch_folder"] = str(settings.watch_folder)
@@ -155,6 +160,7 @@ def apply_operator_settings(
     transfer.setdefault("max_untransferred_files", 10_000)
     sms["enabled"] = settings.sms_enabled
     sms["to_number"] = settings.sms_to_number if settings.sms_enabled else ""
+    telegram["enabled"] = settings.telegram_enabled
     return config
 
 
@@ -186,6 +192,25 @@ def validate_candidate_config(config: dict[str, Any]) -> Config:
             raise ValueError("The Twilio Auth Token is not configured.")
         if not from_number.startswith("+"):
             raise ValueError("The Twilio sender phone number is not configured.")
+
+    telegram = config.get("telegram", {})
+    if telegram.get("enabled", False):
+        bot_token = str(telegram.get("bot_token", ""))
+        bot_token_env = str(telegram.get("bot_token_env", ""))
+        chat_id = str(telegram.get("chat_id", ""))
+        if (
+            not bot_token
+            or bot_token.startswith("PASTE_")
+        ) and not os.environ.get(bot_token_env, ""):
+            raise ValueError(
+                "Telegram has not been configured. Ask the administrator to set "
+                "telegram.bot_token in C:\\ProgramData\\MICWatcher\\watcher_config.json."
+            )
+        if not chat_id:
+            raise ValueError(
+                "The Telegram channel ID is not configured in "
+                "C:\\ProgramData\\MICWatcher\\watcher_config.json."
+            )
 
     validation_path = start_watcher.CONFIG_PATH.with_name("watcher_config.validation.tmp")
     validation_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
@@ -239,6 +264,7 @@ class MonitorWorker(threading.Thread):
                 self.config,
                 Mailer(self.config.email),
                 sms_sender=SmsSender(self.config.sms),
+                telegram_sender=TelegramSender(self.config.telegram),
             )
             next_acquisition = time.monotonic()
             next_transfer = time.monotonic() if self.config.transfer.enabled else float("inf")
@@ -280,7 +306,7 @@ class MICWatcherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("MICWatcher")
-        self.root.minsize(720, 650)
+        self.root.minsize(720, 690)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.events: "queue.Queue[tuple[str, Any]]" = queue.Queue()
@@ -296,6 +322,7 @@ class MICWatcherApp:
         recipient = recipients[0] if isinstance(recipients, list) else str(recipients)
         transfer = config.get("transfer", {})
         sms = config.get("sms", {})
+        telegram = config.get("telegram", {})
 
         self.recipient = tk.StringVar(value=recipient)
         self.microscope_name = tk.StringVar(
@@ -305,6 +332,9 @@ class MICWatcherApp:
         self.acquisition_minutes = tk.StringVar(value="60")
         self.sms_enabled = tk.BooleanVar(value=bool(sms.get("enabled", False)))
         self.sms_to_number = tk.StringVar(value=str(sms.get("to_number", "")))
+        self.telegram_enabled = tk.BooleanVar(
+            value=bool(telegram.get("enabled", False))
+        )
         self.transfer_enabled = tk.BooleanVar(value=bool(transfer.get("enabled", False)))
         self.destination_folder = tk.StringVar(value="")
         self.transfer_minutes = tk.StringVar(value="30")
@@ -382,16 +412,24 @@ class MICWatcherApp:
         self.sms_number_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=6)
         self.form_widgets.append(self.sms_number_entry)
 
+        telegram_check = ttk.Checkbutton(
+            form,
+            text="Send warnings to the configured Telegram channel",
+            variable=self.telegram_enabled,
+        )
+        telegram_check.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        self.form_widgets.append(telegram_check)
+
         self.add_path_row(
-            form, 4, "Local acquisition folder", self.watch_folder, self.browse_source
+            form, 5, "Local acquisition folder", self.watch_folder, self.browse_source
         )
 
         ttk.Label(form, text="Missing-file check").grid(
-            row=5, column=0, sticky="w", padx=(0, 10), pady=6
+            row=6, column=0, sticky="w", padx=(0, 10), pady=6
         )
         acquisition_entry = ttk.Entry(form, textvariable=self.acquisition_minutes, width=12)
-        acquisition_entry.grid(row=5, column=1, sticky="w", pady=6)
-        ttk.Label(form, text="minutes").grid(row=5, column=1, sticky="w", padx=(90, 0))
+        acquisition_entry.grid(row=6, column=1, sticky="w", pady=6)
+        ttk.Label(form, text="minutes").grid(row=6, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(acquisition_entry)
 
         transfer_check = ttk.Checkbutton(
@@ -400,27 +438,27 @@ class MICWatcherApp:
             variable=self.transfer_enabled,
             command=self.update_transfer_controls,
         )
-        transfer_check.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        transfer_check.grid(row=7, column=0, columnspan=3, sticky="w", pady=(10, 4))
         self.form_widgets.append(transfer_check)
 
         ttk.Label(form, text="Transfer destination").grid(
-            row=7, column=0, sticky="w", padx=(0, 10), pady=6
+            row=8, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.destination_entry = ttk.Entry(form, textvariable=self.destination_folder)
-        self.destination_entry.grid(row=7, column=1, sticky="ew", pady=6)
+        self.destination_entry.grid(row=8, column=1, sticky="ew", pady=6)
         self.destination_button = ttk.Button(
             form, text="Browse...", command=self.browse_destination
         )
-        self.destination_button.grid(row=7, column=2, padx=(8, 0), pady=6)
+        self.destination_button.grid(row=8, column=2, padx=(8, 0), pady=6)
         self.form_widgets.extend([self.destination_entry, self.destination_button])
 
         ttk.Label(form, text="Transfer check").grid(
-            row=8, column=0, sticky="w", padx=(0, 10), pady=6
+            row=9, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.transfer_entry = ttk.Entry(form, textvariable=self.transfer_minutes, width=12)
-        self.transfer_entry.grid(row=8, column=1, sticky="w", pady=6)
+        self.transfer_entry.grid(row=9, column=1, sticky="w", pady=6)
         self.transfer_unit = ttk.Label(form, text="minutes")
-        self.transfer_unit.grid(row=8, column=1, sticky="w", padx=(90, 0))
+        self.transfer_unit.grid(row=9, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(self.transfer_entry)
 
         status_frame = ttk.LabelFrame(outer, text="Status", padding=12)
@@ -501,6 +539,7 @@ class MICWatcherApp:
                 self.sms_enabled.get(),
                 self.sms_to_number.get(),
                 self.microscope_name.get(),
+                self.telegram_enabled.get(),
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Cannot start MICWatcher", str(exc), parent=self.root)

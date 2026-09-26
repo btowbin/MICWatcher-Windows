@@ -11,6 +11,8 @@ from microscope_watcher import (
     Mailer,
     SmsConfig,
     SmsSender,
+    TelegramConfig,
+    TelegramSender,
     TransferConfig,
     TransferBacklogExceeded,
     Watcher,
@@ -34,6 +36,14 @@ class RecordingSmsSender(SmsSender):
         self.messages.append(body)
 
 
+class RecordingTelegramSender(TelegramSender):
+    def __init__(self):
+        self.messages = []
+
+    def send(self, body):
+        self.messages.append(body)
+
+
 class WatcherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -44,6 +54,7 @@ class WatcherTests(unittest.TestCase):
         self.time = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
         self.mailer = RecordingMailer()
         self.sms_sender = RecordingSmsSender()
+        self.telegram_sender = RecordingTelegramSender()
         self.config = Config(
             microscope_name="Scope A",
             watch_folder=self.folder,
@@ -56,6 +67,7 @@ class WatcherTests(unittest.TestCase):
                 "smtp.test", 587, "starttls", "", "PASSWORD", "", "a@test", ("b@test",), 5
             ),
             sms=SmsConfig(False, "", "TWILIO_TOKEN", "", "", "", 5),
+            telegram=TelegramConfig(False, "TELEGRAM_TOKEN", "", "", 5),
             transfer=TransferConfig(False, None, 60, 60, None, 10_000),
         )
 
@@ -66,7 +78,13 @@ class WatcherTests(unittest.TestCase):
         return self.time
 
     def watcher(self):
-        return Watcher(self.config, self.mailer, self.clock, self.sms_sender)
+        return Watcher(
+            self.config,
+            self.mailer,
+            self.clock,
+            self.sms_sender,
+            self.telegram_sender,
+        )
 
     def enable_sms(self):
         self.config = replace(
@@ -87,6 +105,18 @@ class WatcherTests(unittest.TestCase):
             self.config,
             transfer=TransferConfig(
                 True, destination or self.destination, 60, 60, None, 10_000
+            ),
+        )
+
+    def enable_telegram(self):
+        self.config = replace(
+            self.config,
+            telegram=TelegramConfig(
+                True,
+                "TELEGRAM_TOKEN",
+                "123456:token",
+                "@micwatcher_test",
+                5,
             ),
         )
 
@@ -167,6 +197,22 @@ class WatcherTests(unittest.TestCase):
         self.time += timedelta(seconds=30)
         watcher.check_once()
         self.assertFalse(any("WARNING" in subject for subject, _ in self.mailer.messages))
+
+    def test_inactivity_sends_only_one_telegram_message_for_the_incident(self):
+        self.enable_telegram()
+        (self.folder / "first-telegram.tif").write_bytes(b"image")
+        watcher = self.watcher()
+        watcher.check_once()
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+
+        self.assertEqual(1, len(self.telegram_sender.messages))
+        self.assertIn("no new image files", self.telegram_sender.messages[0])
 
     def test_daily_report_is_not_repeated_before_24_hours(self):
         watcher = self.watcher()
@@ -344,6 +390,30 @@ class WatcherTests(unittest.TestCase):
         watcher.check_once()
         self.assertFalse(source.exists())
         self.assertEqual(b"first-second", (self.destination / "growing.tif").read_bytes())
+
+    def test_transfer_failure_sends_only_one_telegram_message(self):
+        self.enable_telegram()
+        blocked_destination = self.root / "blocked-telegram"
+        blocked_destination.write_text("not a directory", encoding="utf-8")
+        self.enable_transfer(blocked_destination)
+        watcher = self.watcher()
+        watcher.check_once()
+        source = self.folder / "new-telegram.tif"
+        source.write_bytes(b"image-data")
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.assertEqual(1, len(self.telegram_sender.messages))
+        self.assertIn("file transfer failed", self.telegram_sender.messages[0])
+
+        blocked_destination.unlink()
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.assertEqual(1, len(self.telegram_sender.messages))
 
     def test_destination_collision_preserves_local_source(self):
         self.enable_transfer()

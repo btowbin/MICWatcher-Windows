@@ -23,6 +23,13 @@
     "to_number": "",
     "timeout_seconds": 30
   },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "PASTE_TELEGRAM_BOT_TOKEN_HERE",
+    "bot_token_env": "MICWATCHER_TELEGRAM_BOT_TOKEN",
+    "chat_id": "@your_channel_username",
+    "timeout_seconds": 30
+  },
   "email": {
     "smtp_host": "smtp.gmail.com",
     "smtp_port": 587,

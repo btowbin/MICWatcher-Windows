@@ -163,6 +163,33 @@ class LauncherTests(unittest.TestCase):
                     "079 123 45 67",
                 )
 
+    def test_telegram_option_preserves_bot_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = micwatcher_gui.validate_operator_settings(
+                "operator@example.org",
+                temporary,
+                "60",
+                False,
+                "",
+                "30",
+                False,
+                "",
+                "Scope Telegram",
+                True,
+            )
+            existing = {
+                "email": {},
+                "transfer": {},
+                "telegram": {
+                    "bot_token": "123456:secret",
+                    "chat_id": "@lab_channel",
+                },
+            }
+            updated = micwatcher_gui.apply_operator_settings(existing, settings)
+            self.assertTrue(updated["telegram"]["enabled"])
+            self.assertEqual("123456:secret", updated["telegram"]["bot_token"])
+            self.assertEqual("@lab_channel", updated["telegram"]["chat_id"])
+
     def test_experiment_name_is_required_and_must_be_one_line(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "experiment or microscope name"):
