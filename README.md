@@ -47,7 +47,7 @@ Windows displays a User Account Control prompt because the installer creates a m
 
 The graphical launcher asks for the experiment/microscope name, recipient, local folder, intervals, and optional transfer destination each time it starts. The chosen name is used in email subjects, email reports, and SMS warnings. The shared configuration is not overwritten by updates.
 
-Changing either the experiment/microscope name or the acquisition folder starts fresh warning and daily-report state. Reopening the same experiment with the same name and folder preserves its state, preventing duplicate warnings after an accidental restart.
+Every click on **Start monitoring** begins with fresh runtime state, including after Stop/Start or a complete application relaunch. Warning counts, transfer-failure suppression, daily-report timing, transfer-stability tracking, and session counters do not carry over, even when the same experiment name and folders are reused.
 
 ## Install the graphical launcher
 
@@ -117,7 +117,7 @@ There is intentionally no automatic test SMS: enabling SMS sends messages only f
 - No further inactivity warnings are sent until files appear again; recovery produces one email.
 - The daily report includes file count, disk space, and transfer status.
 - `C:\ProgramData\MICWatcher\microscope_watcher.log` records operation and errors.
-- `C:\ProgramData\MICWatcher\watcher_state.json` preserves alert and report state across restarts and Windows users.
+- `C:\ProgramData\MICWatcher\watcher_state.json` records the latest status of the current run for diagnostics. A new run deliberately ignores the previous file and starts fresh.
 - Existing stable files are transferred when transfer is enabled.
 - There is no default limit on the number of files transferred per check.
 

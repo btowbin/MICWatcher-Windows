@@ -137,7 +137,7 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(1, len(self.sms_sender.messages))
         self.assertIn("no new image files", self.sms_sender.messages[0])
 
-    def test_new_experiment_name_resets_warnings_when_folder_is_reused(self):
+    def test_restart_resets_warnings_with_same_name_and_folder(self):
         (self.folder / "first.tif").write_bytes(b"image")
         old_watcher = self.watcher()
         old_watcher.check_once()
@@ -148,7 +148,6 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(2, old_watcher.state["inactivity_warning_count"])
 
         self.mailer.messages.clear()
-        self.config = replace(self.config, microscope_name="Scope A - new experiment")
         new_watcher = self.watcher()
         new_watcher.check_once()
         self.assertEqual(0, sum("WARNING" in subject for subject, _ in self.mailer.messages))
@@ -159,7 +158,7 @@ class WatcherTests(unittest.TestCase):
             subject for subject, _ in self.mailer.messages if "WARNING" in subject
         ]
         self.assertEqual(1, len(warnings))
-        self.assertIn("Scope A - new experiment", warnings[0])
+        self.assertIn("Scope A", warnings[0])
 
     def test_does_not_warn_before_a_full_interval(self):
         watcher = self.watcher()

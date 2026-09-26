@@ -275,17 +275,6 @@ def scan_folder(
     return FolderSnapshot(count, newest_ns, newest_file, tuple(transfer_files))
 
 
-def load_state(path: Path) -> dict[str, Any]:
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-        return state if isinstance(state, dict) else {}
-    except FileNotFoundError:
-        return {}
-    except (json.JSONDecodeError, OSError) as exc:
-        LOG.warning("Cannot read state file %s; starting fresh: %s", path, exc)
-        return {}
-
-
 def save_state(path: Path, state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -393,35 +382,19 @@ class Watcher:
         self.mailer = mailer
         self.clock = clock
         self.sms_sender = sms_sender
-        self.state = load_state(config.state_file)
-        configured_watch = str(config.watch_folder.resolve())
-        previous_watch = self.state.get("configured_watch_folder")
-        configured_name = config.microscope_name
-        previous_name = self.state.get("configured_microscope_name")
-        if previous_watch != configured_watch or previous_name != configured_name:
-            LOG.info(
-                "Experiment name or watched folder changed; resetting monitor and transfer state"
-            )
-            self.state = {}
-        self.state["configured_watch_folder"] = configured_watch
-        self.state["configured_microscope_name"] = configured_name
-        configured_destination = (
-            str(config.transfer.destination_folder.resolve())
-            if config.transfer.destination_folder is not None
-            else None
-        )
-        previous_destination = self.state.get("configured_transfer_destination")
-        if previous_destination is not None and previous_destination != configured_destination:
-            LOG.info("Transfer destination changed; resetting transfer status")
-            for key in (
-                "transfer_failed",
-                "transfer_failed_at",
-                "last_transfer_error",
-                "transfer_pending",
-                "transfer_pending_count",
-            ):
-                self.state.pop(key, None)
-        self.state["configured_transfer_destination"] = configured_destination
+        # A Watcher instance represents one explicit GUI monitoring run. Never
+        # inherit warning suppression, report timing, or transfer stability from
+        # an earlier run, even when its name and folders are identical.
+        self.state: dict[str, Any] = {
+            "configured_watch_folder": str(config.watch_folder.resolve()),
+            "configured_microscope_name": config.microscope_name,
+            "configured_transfer_destination": (
+                str(config.transfer.destination_folder.resolve())
+                if config.transfer.destination_folder is not None
+                else None
+            ),
+        }
+        LOG.info("Starting a new monitoring run with fresh runtime state")
 
     def _send(self, subject: str, body: str) -> bool:
         try:
