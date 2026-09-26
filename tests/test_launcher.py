@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -7,17 +8,32 @@ from unittest.mock import patch
 
 import start_watcher
 import install_windows_launcher
+import micwatcher_gui
 
 
 class LauncherTests(unittest.TestCase):
-    def test_windows_launcher_opens_terminal(self):
-        contents = install_windows_launcher.launcher_contents()
-        self.assertIn("@echo off", contents)
-        self.assertIn("title MICWatcher", contents)
-        self.assertIn("start_watcher.py", contents)
-        self.assertIn("MICWATCHER_DATA_DIR", contents)
-        self.assertIn("py -3", contents)
-        self.assertIn("pause", contents)
+    def test_powershell_shortcut_values_are_escaped(self):
+        self.assertEqual("'C:\\Lab''s MICWatcher'", install_windows_launcher.powershell_literal("C:\\Lab's MICWatcher"))
+
+    def test_all_users_installer_rejects_user_private_python(self):
+        with (
+            patch.dict(os.environ, {"USERPROFILE": "C:\\Users\\operator"}),
+            patch.object(
+                install_windows_launcher.shutil,
+                "which",
+                side_effect=[
+                    "C:\\Users\\operator\\AppData\\Local\\Python\\pyw.exe",
+                    "C:\\Users\\operator\\AppData\\Local\\Python\\pythonw.exe",
+                ],
+            ),
+            patch.object(
+                install_windows_launcher.sys,
+                "executable",
+                "C:\\Users\\operator\\AppData\\Local\\Python\\python.exe",
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                install_windows_launcher.find_gui_python()
 
     def test_all_users_install_uses_shared_locations_and_preserves_config(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -43,18 +59,65 @@ class LauncherTests(unittest.TestCase):
                 patch.object(install_windows_launcher, "PUBLIC_DESKTOP", desktop),
                 patch.object(install_windows_launcher, "COMMON_START_MENU", start_menu),
                 patch.object(install_windows_launcher, "grant_users_modify_access"),
+                patch.object(
+                    install_windows_launcher,
+                    "find_gui_python",
+                    return_value=(Path("C:/Python/pythonw.exe"), ()),
+                ),
+                patch.object(install_windows_launcher.subprocess, "run"),
+                patch.object(install_windows_launcher, "create_shortcut") as create_shortcut,
             ):
                 launchers = install_windows_launcher.install_all_users()
 
             self.assertEqual('{"preserved": true}\n', existing_config.read_text(encoding="utf-8"))
             self.assertTrue((program / "start_watcher.py").is_file())
             self.assertEqual(
-                [desktop / "MICWatcher.cmd", start_menu / "MICWatcher.cmd"], launchers
+                [desktop / "MICWatcher.lnk", start_menu / "MICWatcher.lnk"], launchers
             )
-            for launcher in launchers:
-                contents = launcher.read_text(encoding="utf-8")
-                self.assertIn(str(program), contents)
-                self.assertIn(str(data), contents)
+            self.assertTrue((program / "micwatcher_gui.py").is_file())
+            self.assertEqual(2, create_shortcut.call_count)
+            for shortcut_call in create_shortcut.call_args_list:
+                self.assertIn(str(program / "micwatcher_gui.py"), shortcut_call.args[2])
+
+    def test_gui_settings_are_validated_and_preserve_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "images"
+            destination = root / "network"
+            source.mkdir()
+            destination.mkdir()
+            settings = micwatcher_gui.validate_operator_settings(
+                "operator@example.org",
+                str(source),
+                "60",
+                True,
+                str(destination),
+                "30",
+            )
+            existing = {
+                "watch_folder": "old",
+                "email": {
+                    "username": "watcher@gmail.com",
+                    "password": "secret",
+                    "to_addresses": ["old@example.org"],
+                },
+                "transfer": {"max_files_per_check": None},
+            }
+            updated = micwatcher_gui.apply_operator_settings(existing, settings)
+            self.assertEqual("secret", updated["email"]["password"])
+            self.assertEqual(["operator@example.org"], updated["email"]["to_addresses"])
+            self.assertEqual(3600, updated["check_interval_seconds"])
+            self.assertEqual(1800, updated["transfer"]["check_interval_seconds"])
+            self.assertEqual(str(destination.resolve()), updated["transfer"]["destination_folder"])
+
+    def test_disabled_transfer_does_not_require_transfer_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            settings = micwatcher_gui.validate_operator_settings(
+                "operator@example.org", str(source), "60", False, "", "not a number"
+            )
+            self.assertFalse(settings.transfer_enabled)
+            self.assertIsNone(settings.destination_folder)
 
     def test_instance_lock_prevents_a_second_launcher(self):
         with tempfile.TemporaryDirectory() as temporary:

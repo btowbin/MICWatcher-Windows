@@ -639,6 +639,8 @@ class Watcher:
                 snapshot.newest_file,
                 snapshot.transfer_files,
             )
+        if report_snapshot is not None:
+            self.state["local_file_count"] = report_snapshot.file_count
         if check_acquisition:
             self._maybe_send_daily_report(observed_at, report_snapshot)
             self.state["last_check_at"] = observed_at.isoformat()

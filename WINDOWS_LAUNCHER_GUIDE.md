@@ -5,11 +5,12 @@ This guide is for microscope operators. The Gmail sender account and all-users l
 ## Start an experiment
 
 1. Start the microscopy experiment normally and confirm that it is saving images.
-2. In File Explorer, open the local folder in which that experiment is saving files.
-3. Click the File Explorer address bar or press Ctrl+L.
-4. Press Ctrl+C to copy the complete folder path.
-5. Double-click **MICWatcher** on the Desktop or open **MICWatcher** from the Start menu.
-6. When the launcher asks for the local acquisition folder, right-click in the terminal window to paste the copied path, then press Enter.
+2. Double-click **MICWatcher** on the Desktop or open **MICWatcher** from the Start menu.
+3. Enter the alert email address.
+4. Next to **Local acquisition folder**, click **Browse...**.
+5. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
+
+You can alternatively open the local folder in File Explorer, click the address bar or press Ctrl+L, copy the path with Ctrl+C, and paste it into the MICWatcher path field with Ctrl+V.
 
 The local path will normally look similar to:
 
@@ -23,7 +24,7 @@ Do not select an individual image file. Select the folder containing the experim
 
 If files should be transferred to the lab server:
 
-1. Open File Explorer.
+1. Open File Explorer and connect to the server first.
 2. Click the address bar or press Ctrl+L.
 3. Enter the server address below and press Enter:
 
@@ -33,31 +34,34 @@ If files should be transferred to the lab server:
 
 4. If Windows asks for credentials, sign in with the account that has access to the share.
 5. Navigate to the desired destination and create a folder for the microscope or experiment if necessary.
-6. Open that destination folder.
-7. Click the address bar or press Ctrl+L, then press Ctrl+C to copy its complete path.
-8. When the launcher asks for the transfer destination, right-click in the terminal to paste the path and press Enter.
+6. In MICWatcher, select **Transfer stable files to a network folder**.
+7. Click **Browse...** next to **Transfer destination** and choose the folder.
+
+If the network folder does not appear in the folder browser, open it in File Explorer, copy its UNC path from the address bar, and paste that path directly into MICWatcher.
 
 Use a separate destination for each microscope. The destination cannot be inside the local acquisition folder.
 
-## Answer the launcher questions
+## Complete the experiment settings
 
-The launcher asks for:
+The GUI contains:
 
 1. **Alert email address** — the user who should receive warnings and reports.
-2. **Local acquisition folder** — paste the path copied from File Explorer.
-3. **Missing-file check interval** — press Enter for the 60-minute default, or enter another number of minutes.
-4. **Transfer stable files to a network folder** — enter Y or N.
-5. If transfer is enabled, **Transfer destination folder** — paste the network path. There is no default.
-6. **File-transfer check interval** — press Enter for the 30-minute default, or enter another number of minutes.
+2. **Local acquisition folder** — type, paste, or browse to the experiment folder.
+3. **Missing-file check** — 60 minutes by default.
+4. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
+5. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
+6. **Transfer check** — 30 minutes by default.
 
-Review the summary, then press Enter to start MICWatcher.
+Review the settings, then click **Start monitoring**.
 
 ## While MICWatcher is running
 
-- Leave the MICWatcher terminal window open.
+- Leave the MICWatcher window open.
 - The program starts monitoring immediately.
+- The status panel shows the latest check, activity, file count, pending transfers, and errors.
 - Existing stable files in the local folder are also transferred when transfer is enabled.
-- To stop monitoring, select the terminal window and press Ctrl+C.
+- Click **Stop** to end monitoring. If a check or file copy is active, MICWatcher waits for it to finish safely.
+- Closing the window while monitoring asks for confirmation before stopping.
 - Do not start a second copy of MICWatcher for the same installation.
 - Do not log out of the Windows account running MICWatcher; logging out closes the watcher. Locking the computer or switching users without logging out is acceptable.
 
@@ -84,10 +88,10 @@ Open `\\izbkingston.unibe.ch\towbin.data` in File Explorer first, authenticate i
 
 Reconnect it in File Explorer. MICWatcher retains local files when transfer fails and reports recovery after a later successful transfer.
 
-**The terminal closes immediately**
+**The application does not open**
 
-Open `C:\ProgramData\MICWatcher\microscope_watcher.log`. If Python is reported missing, ask the administrator to install Python 3 for all users.
+Ask the administrator to confirm that Python 3 was installed for all users with Tcl/Tk support. Operational errors are recorded in `C:\ProgramData\MICWatcher\microscope_watcher.log`.
 
 **MICWatcher says another copy is already running**
 
-Another signed-in Windows account may already be running it. Return to that account and stop its MICWatcher terminal before starting a new copy.
+Another signed-in Windows account may already be running it. Return to that account and stop its MICWatcher window before starting a new copy.

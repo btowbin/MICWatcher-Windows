@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import msvcrt
 import os
@@ -26,50 +27,74 @@ COMMON_START_MENU = (
 PROGRAM_FILES = (
     "microscope_watcher.py",
     "start_watcher.py",
+    "micwatcher_gui.py",
     "watcher_config.example.json",
     "README.md",
     "WINDOWS_LAUNCHER_GUIDE.md",
 )
 
 
-def batch_quote(value: Path | str) -> str:
-    """Quote a value for a batch file and escape environment expansion."""
-    return '"' + str(value).replace("%", "%%").replace('"', '""') + '"'
+def find_gui_python() -> tuple[Path, tuple[str, ...]]:
+    """Find a windowless Python entry point available to all user accounts."""
+    user_profile_value = os.environ.get("USERPROFILE", "")
+    user_profile = Path(user_profile_value).resolve() if user_profile_value else None
+    profiles_root = Path(os.environ.get("PUBLIC", r"C:\Users\Public")).resolve().parent
+
+    def shared_path(value: str | Path) -> Path | None:
+        candidate = Path(value).resolve()
+        if candidate == profiles_root or profiles_root in candidate.parents:
+            return None
+        if user_profile is not None and (candidate == user_profile or user_profile in candidate.parents):
+            return None
+        return candidate
+
+    launcher = shutil.which("pyw.exe")
+    if launcher:
+        shared_launcher = shared_path(launcher)
+        if shared_launcher is not None:
+            return shared_launcher, ("-3",)
+    pythonw = shutil.which("pythonw.exe")
+    if pythonw:
+        shared_pythonw = shared_path(pythonw)
+        if shared_pythonw is not None:
+            return shared_pythonw, ()
+    sibling = Path(sys.executable).resolve().with_name("pythonw.exe")
+    shared_sibling = shared_path(sibling)
+    if sibling.is_file() and shared_sibling is not None:
+        return shared_sibling, ()
+    raise RuntimeError(
+        "A windowless Python 3 launcher (pyw.exe or pythonw.exe) was not found. "
+        "Install Python 3 for all users, including Tcl/Tk support."
+    )
 
 
-def launcher_contents(
-    program_root: Path | None = None, data_root: Path | None = None
-) -> str:
-    program_root = PROGRAM_ROOT if program_root is None else program_root
-    data_root = DATA_ROOT if data_root is None else data_root
-    launcher_script = program_root / "start_watcher.py"
-    return (
-        "@echo off\r\n"
-        "setlocal\r\n"
-        "title MICWatcher\r\n"
-        f"set \"MICWATCHER_DATA_DIR={str(data_root).replace('%', '%%')}\"\r\n"
-        f"cd /d {batch_quote(program_root)}\r\n"
-        "where py.exe >nul 2>nul\r\n"
-        "if not errorlevel 1 (\r\n"
-        f"  py -3 {batch_quote(launcher_script)}\r\n"
-        ") else (\r\n"
-        "  where python.exe >nul 2>nul\r\n"
-        "  if errorlevel 1 (\r\n"
-        "    echo Python 3 is not available for this Windows user.\r\n"
-        "    echo Ask the administrator to install Python for all users.\r\n"
-        "    pause\r\n"
-        "    exit /b 2\r\n"
-        "  )\r\n"
-        f"  python {batch_quote(launcher_script)}\r\n"
-        ")\r\n"
-        "set MICWATCHER_EXIT=%ERRORLEVEL%\r\n"
-        "if not \"%MICWATCHER_EXIT%\"==\"0\" (\r\n"
-        "  echo.\r\n"
-        "  echo MICWatcher exited with code %MICWATCHER_EXIT%.\r\n"
-        ")\r\n"
-        "echo.\r\n"
-        "pause\r\n"
-        "exit /b %MICWATCHER_EXIT%\r\n"
+def powershell_literal(value: str | Path) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def create_shortcut(
+    destination: Path,
+    target: Path,
+    arguments: str,
+    working_directory: Path,
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    script = (
+        "$shell = New-Object -ComObject WScript.Shell\n"
+        f"$shortcut = $shell.CreateShortcut({powershell_literal(destination)})\n"
+        f"$shortcut.TargetPath = {powershell_literal(target)}\n"
+        f"$shortcut.Arguments = {powershell_literal(arguments)}\n"
+        f"$shortcut.WorkingDirectory = {powershell_literal(working_directory)}\n"
+        "$shortcut.Description = 'Configure and start MICWatcher'\n"
+        f"$shortcut.IconLocation = {powershell_literal(str(target) + ',0')}\n"
+        "$shortcut.Save()\n"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -112,13 +137,6 @@ def install_file(source: Path, destination: Path) -> None:
     os.replace(temporary, destination)
 
 
-def install_file_from_text(destination: Path, contents: str) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(destination.name + ".installing")
-    temporary.write_text(contents, encoding="utf-8", newline="")
-    os.replace(temporary, destination)
-
-
 def grant_users_modify_access(path: Path) -> None:
     """Allow the language-neutral built-in Users group to update runtime data."""
     subprocess.run(
@@ -158,13 +176,24 @@ def install_all_users() -> list[Path]:
 
         grant_users_modify_access(DATA_ROOT)
 
-        contents = launcher_contents()
+        gui_python, python_arguments = find_gui_python()
+        subprocess.run(
+            [str(gui_python), *python_arguments, "-c", "import tkinter"],
+            check=True,
+        )
+        gui_script = PROGRAM_ROOT / "micwatcher_gui.py"
+        shortcut_arguments = subprocess.list2cmdline([*python_arguments, str(gui_script)])
         launchers = [
-            PUBLIC_DESKTOP / "MICWatcher.cmd",
-            COMMON_START_MENU / "MICWatcher.cmd",
+            PUBLIC_DESKTOP / "MICWatcher.lnk",
+            COMMON_START_MENU / "MICWatcher.lnk",
         ]
         for launcher in launchers:
-            install_file_from_text(launcher, contents)
+            create_shortcut(launcher, gui_python, shortcut_arguments, PROGRAM_ROOT)
+        for legacy in (
+            PUBLIC_DESKTOP / "MICWatcher.cmd",
+            COMMON_START_MENU / "MICWatcher.cmd",
+        ):
+            legacy.unlink(missing_ok=True)
         return launchers
     finally:
         install_lock.close()

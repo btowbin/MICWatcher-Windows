@@ -14,7 +14,10 @@ from microscope_watcher import load_config, main as watcher_main
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_ROOT = Path(os.environ.get("MICWATCHER_DATA_DIR", ROOT)).resolve()
+INSTALLED_ROOT = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "MICWatcher"
+SHARED_DATA_ROOT = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "MICWatcher"
+DEFAULT_DATA_ROOT = SHARED_DATA_ROOT if ROOT == INSTALLED_ROOT.resolve() else ROOT
+DATA_ROOT = Path(os.environ.get("MICWATCHER_DATA_DIR", DEFAULT_DATA_ROOT)).resolve()
 CONFIG_PATH = DATA_ROOT / "watcher_config.json"
 EXAMPLE_CONFIG_PATH = ROOT / "watcher_config.example.json"
 INSTANCE_LOCK_PATH = DATA_ROOT / ".micwatcher.lock"

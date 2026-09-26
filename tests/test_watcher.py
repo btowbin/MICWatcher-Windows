@@ -133,6 +133,7 @@ class WatcherTests(unittest.TestCase):
         destination = self.destination / "experiment" / "new.tif"
         self.assertFalse(source.exists())
         self.assertEqual(b"image-data", destination.read_bytes())
+        self.assertEqual(0, watcher.state["local_file_count"])
 
     def test_existing_file_at_startup_is_transferred_when_stable(self):
         self.enable_transfer()
