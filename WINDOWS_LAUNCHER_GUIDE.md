@@ -1,6 +1,6 @@
 # MICWatcher Windows launcher guide
 
-This guide is for microscope operators. The Gmail sender account and desktop launcher should already have been configured once by the lab administrator.
+This guide is for microscope operators. The Gmail sender account and all-users launcher should already have been configured once by the lab administrator. Individual Windows users do not install MICWatcher again.
 
 ## Start an experiment
 
@@ -59,6 +59,7 @@ Review the summary, then press Enter to start MICWatcher.
 - Existing stable files in the local folder are also transferred when transfer is enabled.
 - To stop monitoring, select the terminal window and press Ctrl+C.
 - Do not start a second copy of MICWatcher for the same installation.
+- Do not log out of the Windows account running MICWatcher; logging out closes the watcher. Locking the computer or switching users without logging out is acceptable.
 
 ## Email behavior
 
@@ -85,4 +86,8 @@ Reconnect it in File Explorer. MICWatcher retains local files when transfer fail
 
 **The terminal closes immediately**
 
-Open `microscope_watcher.log` in the MICWatcher folder. If the installation was moved, run `python install_windows_launcher.py` again so the desktop launcher contains the new path.
+Open `C:\ProgramData\MICWatcher\microscope_watcher.log`. If Python is reported missing, ask the administrator to install Python 3 for all users.
+
+**MICWatcher says another copy is already running**
+
+Another signed-in Windows account may already be running it. Return to that account and stop its MICWatcher terminal before starting a new copy.

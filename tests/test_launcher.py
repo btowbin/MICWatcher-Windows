@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,46 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("@echo off", contents)
         self.assertIn("title MICWatcher", contents)
         self.assertIn("start_watcher.py", contents)
+        self.assertIn("MICWATCHER_DATA_DIR", contents)
+        self.assertIn("py -3", contents)
         self.assertIn("pause", contents)
+
+    def test_all_users_install_uses_shared_locations_and_preserves_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            program = root / "Program Files" / "MICWatcher"
+            data = root / "ProgramData" / "MICWatcher"
+            desktop = root / "Public" / "Desktop"
+            start_menu = root / "ProgramData" / "Start Menu" / "Programs"
+            source.mkdir()
+            data.mkdir(parents=True)
+
+            repository = Path(__file__).resolve().parents[1]
+            for name in install_windows_launcher.PROGRAM_FILES:
+                shutil.copyfile(repository / name, source / name)
+            existing_config = data / "watcher_config.json"
+            existing_config.write_text('{"preserved": true}\n', encoding="utf-8")
+
+            with (
+                patch.object(install_windows_launcher, "SOURCE_ROOT", source),
+                patch.object(install_windows_launcher, "PROGRAM_ROOT", program),
+                patch.object(install_windows_launcher, "DATA_ROOT", data),
+                patch.object(install_windows_launcher, "PUBLIC_DESKTOP", desktop),
+                patch.object(install_windows_launcher, "COMMON_START_MENU", start_menu),
+                patch.object(install_windows_launcher, "grant_users_modify_access"),
+            ):
+                launchers = install_windows_launcher.install_all_users()
+
+            self.assertEqual('{"preserved": true}\n', existing_config.read_text(encoding="utf-8"))
+            self.assertTrue((program / "start_watcher.py").is_file())
+            self.assertEqual(
+                [desktop / "MICWatcher.cmd", start_menu / "MICWatcher.cmd"], launchers
+            )
+            for launcher in launchers:
+                contents = launcher.read_text(encoding="utf-8")
+                self.assertIn(str(program), contents)
+                self.assertIn(str(data), contents)
 
     def test_instance_lock_prevents_a_second_launcher(self):
         with tempfile.TemporaryDirectory() as temporary:

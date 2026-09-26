@@ -14,9 +14,10 @@ from microscope_watcher import load_config, main as watcher_main
 
 
 ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = ROOT / "watcher_config.json"
+DATA_ROOT = Path(os.environ.get("MICWATCHER_DATA_DIR", ROOT)).resolve()
+CONFIG_PATH = DATA_ROOT / "watcher_config.json"
 EXAMPLE_CONFIG_PATH = ROOT / "watcher_config.example.json"
-INSTANCE_LOCK_PATH = ROOT / ".micwatcher.lock"
+INSTANCE_LOCK_PATH = DATA_ROOT / ".micwatcher.lock"
 
 
 def prompt_text(label: str, default: str = "") -> str:
@@ -161,7 +162,7 @@ def configure() -> bool:
 
     if watch_folder != original_watch_folder:
         state_value = Path(str(config.get("state_file", "watcher_state.json")))
-        state_path = state_value if state_value.is_absolute() else ROOT / state_value
+        state_path = state_value if state_value.is_absolute() else CONFIG_PATH.parent / state_value
         if state_path.exists():
             previous_state = state_path.with_suffix(state_path.suffix + ".previous")
             os.replace(state_path, previous_state)
