@@ -9,6 +9,8 @@ from microscope_watcher import (
     Config,
     EmailConfig,
     Mailer,
+    SmsConfig,
+    SmsSender,
     TransferConfig,
     TransferBacklogExceeded,
     Watcher,
@@ -24,6 +26,14 @@ class RecordingMailer(Mailer):
         self.messages.append((subject, body))
 
 
+class RecordingSmsSender(SmsSender):
+    def __init__(self):
+        self.messages = []
+
+    def send(self, body):
+        self.messages.append(body)
+
+
 class WatcherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -33,6 +43,7 @@ class WatcherTests(unittest.TestCase):
         self.destination = self.root / "network"
         self.time = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
         self.mailer = RecordingMailer()
+        self.sms_sender = RecordingSmsSender()
         self.config = Config(
             microscope_name="Scope A",
             watch_folder=self.folder,
@@ -44,6 +55,7 @@ class WatcherTests(unittest.TestCase):
             email=EmailConfig(
                 "smtp.test", 587, "starttls", "", "PASSWORD", "", "a@test", ("b@test",), 5
             ),
+            sms=SmsConfig(False, "", "TWILIO_TOKEN", "", "", "", 5),
             transfer=TransferConfig(False, None, 60, 60, None, 10_000),
         )
 
@@ -54,7 +66,21 @@ class WatcherTests(unittest.TestCase):
         return self.time
 
     def watcher(self):
-        return Watcher(self.config, self.mailer, self.clock)
+        return Watcher(self.config, self.mailer, self.clock, self.sms_sender)
+
+    def enable_sms(self):
+        self.config = replace(
+            self.config,
+            sms=SmsConfig(
+                True,
+                "AC123",
+                "TWILIO_TOKEN",
+                "token",
+                "+15017122661",
+                "+41791234567",
+                5,
+            ),
+        )
 
     def enable_transfer(self, destination=None):
         self.config = replace(
@@ -94,6 +120,22 @@ class WatcherTests(unittest.TestCase):
         watcher.check_once()
         self.assertIn("[RECOVERED]", self.mailer.messages[-1][0])
         self.assertEqual(0, watcher.state["inactivity_warning_count"])
+
+    def test_inactivity_sends_only_one_sms_for_the_incident(self):
+        self.enable_sms()
+        (self.folder / "first.tif").write_bytes(b"image")
+        watcher = self.watcher()
+        watcher.check_once()
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+
+        self.assertEqual(1, len(self.sms_sender.messages))
+        self.assertIn("no new image files", self.sms_sender.messages[0])
 
     def test_does_not_warn_before_a_full_interval(self):
         watcher = self.watcher()
@@ -235,6 +277,30 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(
             1, sum("TRANSFER RECOVERED" in subject for subject, _ in self.mailer.messages)
         )
+
+    def test_transfer_failure_sends_only_one_sms_and_no_recovery_sms(self):
+        self.enable_sms()
+        blocked_destination = self.root / "blocked-sms"
+        blocked_destination.write_text("not a directory", encoding="utf-8")
+        self.enable_transfer(blocked_destination)
+        watcher = self.watcher()
+        watcher.check_once()
+        source = self.folder / "new-sms.tif"
+        source.write_bytes(b"image-data")
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.assertEqual(1, len(self.sms_sender.messages))
+        self.assertIn("file transfer failed", self.sms_sender.messages[0])
+
+        blocked_destination.unlink()
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.assertEqual(1, len(self.sms_sender.messages))
 
     def test_changing_file_is_not_transferred_until_stable(self):
         self.enable_transfer()

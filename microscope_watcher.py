@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -12,6 +13,9 @@ import socket
 import ssl
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -62,6 +66,17 @@ class EmailConfig:
 
 
 @dataclass(frozen=True)
+class SmsConfig:
+    enabled: bool
+    account_sid: str
+    auth_token_env: str
+    auth_token: str
+    from_number: str
+    to_number: str
+    timeout_seconds: float
+
+
+@dataclass(frozen=True)
 class Config:
     microscope_name: str
     watch_folder: Path
@@ -71,6 +86,7 @@ class Config:
     state_file: Path
     log_file: Path
     email: EmailConfig
+    sms: SmsConfig
     transfer: "TransferConfig"
 
 
@@ -140,6 +156,7 @@ def load_config(path: Path) -> Config:
         raise ValueError("email.to_addresses must contain at least one address")
 
     transfer = raw.get("transfer", {})
+    sms = raw.get("sms", {})
     transfer_enabled = bool(transfer.get("enabled", False))
     destination_value = str(transfer.get("destination_folder", "")).strip()
     batch_limit_value = transfer.get("max_files_per_check")
@@ -165,6 +182,15 @@ def load_config(path: Path) -> Config:
             to_addresses=tuple(str(item) for item in recipients),
             timeout_seconds=float(email.get("timeout_seconds", 30)),
         ),
+        sms=SmsConfig(
+            enabled=bool(sms.get("enabled", False)),
+            account_sid=str(sms.get("account_sid", "")).strip(),
+            auth_token_env=str(sms.get("auth_token_env", "MICWATCHER_TWILIO_AUTH_TOKEN")),
+            auth_token=str(sms.get("auth_token", "")),
+            from_number=str(sms.get("from_number", "")).strip(),
+            to_number=str(sms.get("to_number", "")).strip(),
+            timeout_seconds=float(sms.get("timeout_seconds", 30)),
+        ),
         transfer=TransferConfig(
             enabled=transfer_enabled,
             destination_folder=config_path(destination_value) if destination_value else None,
@@ -182,6 +208,18 @@ def load_config(path: Path) -> Config:
         raise ValueError("daily_report_interval_hours must be greater than zero")
     if result.email.security not in {"starttls", "ssl", "none"}:
         raise ValueError("email.security must be one of: starttls, ssl, none")
+    if result.sms.enabled:
+        token = result.sms.auth_token or os.environ.get(result.sms.auth_token_env, "")
+        if not result.sms.account_sid or result.sms.account_sid.startswith("PASTE_"):
+            raise ValueError("sms.account_sid is required when SMS alerts are enabled")
+        if not token or token.startswith("PASTE_"):
+            raise ValueError("sms.auth_token is required when SMS alerts are enabled")
+        if not result.sms.from_number.startswith("+"):
+            raise ValueError("sms.from_number must use international format, for example +15017122661")
+        if not result.sms.to_number.startswith("+"):
+            raise ValueError("sms.to_number must use international format, for example +41791234567")
+        if result.sms.timeout_seconds <= 0:
+            raise ValueError("sms.timeout_seconds must be greater than zero")
     if result.transfer.enabled and result.transfer.destination_folder is None:
         raise ValueError("transfer.destination_folder is required when transfer is enabled")
     if result.transfer.stable_for_seconds < 0:
@@ -290,16 +328,71 @@ class Mailer:
             smtp.send_message(message)
 
 
+class SmsSender:
+    """Send one-way warning messages through Twilio's SMS REST API."""
+
+    def __init__(self, config: SmsConfig, dry_run: bool = False):
+        self.config = config
+        self.dry_run = dry_run
+
+    def send(self, body: str) -> None:
+        if not self.config.enabled:
+            return
+        if self.dry_run:
+            LOG.info("DRY RUN SMS\nTo: %s\n\n%s", self.config.to_number, body)
+            return
+
+        auth_token = self.config.auth_token or os.environ.get(
+            self.config.auth_token_env, ""
+        )
+        if not auth_token:
+            raise RuntimeError("No Twilio Auth Token is configured")
+        endpoint = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            f"{urllib.parse.quote(self.config.account_sid, safe='')}/Messages.json"
+        )
+        payload = urllib.parse.urlencode(
+            {
+                "From": self.config.from_number,
+                "To": self.config.to_number,
+                "Body": body,
+            }
+        ).encode("utf-8")
+        credentials = base64.b64encode(
+            f"{self.config.account_sid}:{auth_token}".encode("utf-8")
+        ).decode("ascii")
+        request = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.config.timeout_seconds
+            ) as response:
+                if response.status < 200 or response.status >= 300:
+                    raise RuntimeError(f"Twilio returned HTTP {response.status}")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(1024).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Twilio returned HTTP {exc.code}: {detail}") from exc
+
+
 class Watcher:
     def __init__(
         self,
         config: Config,
         mailer: Mailer,
         clock: Callable[[], datetime] = now_local,
+        sms_sender: SmsSender | None = None,
     ):
         self.config = config
         self.mailer = mailer
         self.clock = clock
+        self.sms_sender = sms_sender
         self.state = load_state(config.state_file)
         configured_watch = str(config.watch_folder.resolve())
         previous_watch = self.state.get("configured_watch_folder")
@@ -332,6 +425,19 @@ class Watcher:
             return True
         except Exception:
             LOG.exception("Failed to send email: %s", subject)
+            return False
+
+    def _send_warning_sms(self, warning: str) -> bool:
+        if self.sms_sender is None or not self.config.sms.enabled:
+            return False
+        try:
+            self.sms_sender.send(warning)
+            LOG.info("Sent warning SMS to %s", self.config.sms.to_number)
+            return True
+        except Exception:
+            # SMS is an additional alert channel. A failure must never interrupt
+            # monitoring or cause repeated SMS attempts for the same incident.
+            LOG.exception("Failed to send warning SMS to %s", self.config.sms.to_number)
             return False
 
     def _is_activity(self, snapshot: FolderSnapshot) -> bool:
@@ -399,6 +505,10 @@ class Watcher:
                 "A recovery email will be sent after a file transfers successfully."
             )
             self._send(subject, body)
+            self._send_warning_sms(
+                f"MICWatcher {self.config.microscope_name}: file transfer failed. "
+                "Check your email for details."
+            )
 
     def _process_transfers(self, snapshot: FolderSnapshot, observed_at: datetime) -> int:
         if not self.config.transfer.enabled:
@@ -602,6 +712,11 @@ class Watcher:
                         )
                     )
                     self._send(subject, body)
+                    if warning_number == 1:
+                        self._send_warning_sms(
+                            f"MICWatcher {self.config.microscope_name}: no new image files. "
+                            "Check your email for details."
+                        )
                     self.state["inactivity_warning_count"] = warning_number
                 self.state["stalled"] = True
 
@@ -714,6 +829,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     configure_logging(config.log_file, args.verbose)
     mailer = Mailer(config.email, dry_run=args.dry_run)
+    sms_sender = SmsSender(config.sms, dry_run=args.dry_run)
 
     if args.test_email:
         try:
@@ -728,7 +844,7 @@ def main(argv: list[str] | None = None) -> int:
             LOG.exception("Test email failed")
             return 1
 
-    watcher = Watcher(config, mailer)
+    watcher = Watcher(config, mailer, sms_sender=sms_sender)
     if args.once:
         try:
             watcher.check_once()

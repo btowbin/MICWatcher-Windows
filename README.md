@@ -4,6 +4,8 @@ MICWatcher monitors long-running microscope acquisitions on Windows. It checks w
 
 It can optionally move stable files to a network folder. Each file is copied and verified before its local copy is deleted. Transfer failures generate one warning, followed by silence until a successful transfer produces a recovery email.
 
+It can also send one optional Twilio SMS when a new acquisition interruption or transfer failure is first detected. SMS is not used for second email warnings, recoveries, daily reports, or routine status messages.
+
 This is the Windows edition of [MICWatcher](https://github.com/btowbin/MICWatcher). For Ubuntu microscope computers, use the original repository.
 
 ## Requirements
@@ -13,6 +15,7 @@ This is the Windows edition of [MICWatcher](https://github.com/btowbin/MICWatche
 - Read access to the microscope acquisition folder
 - Write access to the transfer destination, if transfer is enabled
 - A Gmail account with 2-Step Verification and a Google app password
+- For optional SMS alerts: a Twilio account, an SMS-capable Twilio sender number, and a verified recipient number while the account is in trial mode
 
 MICWatcher has no third-party Python dependencies. Administrator approval is required once during installation or an update. Operators do not need administrator rights afterward.
 
@@ -35,6 +38,11 @@ In `watcher_config.json`, set these once for that microscope:
 - `email.username`: the Gmail address used to send alerts.
 - `email.password`: the 16-character Google app password, without spaces.
 - `email.from_address`: the same Gmail address.
+- `sms.account_sid`: the Twilio Account SID beginning with `AC`.
+- `sms.auth_token`: the Twilio Auth Token. Treat it like a password.
+- `sms.from_number`: the SMS-capable Twilio phone number in international format, such as `+15017122661`.
+
+Leave `sms.enabled` set to `false` in the shared file. Operators enable SMS and enter the experiment recipient in the GUI. The GUI stores the normalized recipient in `sms.to_number`. A Twilio trial account can send only to recipient numbers verified in the Twilio Console. Twilio charges a small amount for each SMS attempt after trial credit is used.
 
 Windows displays a User Account Control prompt because the installer creates a machine-wide installation. Approve it using an administrator account. The installer copies the program to `C:\Program Files\MICWatcher`, stores the shared configuration and runtime data in `C:\ProgramData\MICWatcher`, and creates one launcher for all users.
 
@@ -53,6 +61,7 @@ This creates a **MICWatcher** shortcut on the Public Desktop and in the common S
 Operators can:
 
 - Enter the alert recipient.
+- Optionally enable one-shot warning SMS and enter a phone number in international format.
 - Type a folder path or select it with **Browse...**.
 - Set the missing-file and transfer intervals.
 - Enable or disable network transfer.
@@ -95,9 +104,14 @@ Send a real test email:
 python microscope_watcher.py --config "$env:ProgramData\MICWatcher\watcher_config.json" --test-email
 ```
 
+There is intentionally no automatic test SMS: enabling SMS sends messages only for a real first acquisition or transfer warning, limiting accidental paid messages.
+
 ## Operation
 
 - At most two inactivity warnings are sent for one interruption.
+- When SMS is enabled, only the first inactivity warning sends an SMS.
+- A transfer failure sends one SMS when first detected; repeated failures and recovery do not send SMS.
+- Daily reports and routine updates never send SMS.
 - No further inactivity warnings are sent until files appear again; recovery produces one email.
 - The daily report includes file count, disk space, and transfer status.
 - `C:\ProgramData\MICWatcher\microscope_watcher.log` records operation and errors.

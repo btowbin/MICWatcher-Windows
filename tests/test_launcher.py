@@ -119,6 +119,46 @@ class LauncherTests(unittest.TestCase):
             self.assertFalse(settings.transfer_enabled)
             self.assertIsNone(settings.destination_folder)
 
+    def test_sms_number_is_normalized_and_credentials_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = micwatcher_gui.validate_operator_settings(
+                "operator@example.org",
+                temporary,
+                "60",
+                False,
+                "",
+                "30",
+                True,
+                "+41 79 123 45 67",
+            )
+            existing = {
+                "email": {},
+                "transfer": {},
+                "sms": {
+                    "account_sid": "AC123",
+                    "auth_token": "secret",
+                    "from_number": "+15017122661",
+                },
+            }
+            updated = micwatcher_gui.apply_operator_settings(existing, settings)
+            self.assertTrue(updated["sms"]["enabled"])
+            self.assertEqual("+41791234567", updated["sms"]["to_number"])
+            self.assertEqual("secret", updated["sms"]["auth_token"])
+
+    def test_enabled_sms_requires_international_phone_number(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "international format"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org",
+                    temporary,
+                    "60",
+                    False,
+                    "",
+                    "30",
+                    True,
+                    "079 123 45 67",
+                )
+
     def test_instance_lock_prevents_a_second_launcher(self):
         with tempfile.TemporaryDirectory() as temporary:
             lock_path = Path(temporary) / ".micwatcher.lock"

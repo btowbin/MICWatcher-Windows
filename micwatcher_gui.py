@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import tkinter as tk
@@ -19,6 +20,7 @@ import start_watcher
 from microscope_watcher import (
     Config,
     Mailer,
+    SmsSender,
     TransferBacklogExceeded,
     Watcher,
     format_timestamp,
@@ -38,6 +40,8 @@ class OperatorSettings:
     transfer_enabled: bool
     destination_folder: Path | None
     transfer_interval_seconds: float
+    sms_enabled: bool
+    sms_to_number: str
 
 
 def normalized_path(value: str) -> Path:
@@ -54,6 +58,10 @@ def positive_minutes(value: str, label: str) -> float:
     return minutes * 60
 
 
+def normalize_phone_number(value: str) -> str:
+    return re.sub(r"[\s().-]", "", value.strip())
+
+
 def validate_operator_settings(
     recipient: str,
     watch_folder: str,
@@ -61,6 +69,8 @@ def validate_operator_settings(
     transfer_enabled: bool,
     destination_folder: str,
     transfer_minutes: str,
+    sms_enabled: bool = False,
+    sms_to_number: str = "",
 ) -> OperatorSettings:
     recipient = recipient.strip()
     if "@" not in recipient or recipient.startswith("@") or recipient.endswith("@"):
@@ -92,6 +102,12 @@ def validate_operator_settings(
         if destination == source or source in destination.parents:
             raise ValueError("The transfer destination cannot be inside the acquisition folder.")
 
+    phone_number = normalize_phone_number(sms_to_number)
+    if sms_enabled and not re.fullmatch(r"\+[1-9]\d{7,14}", phone_number):
+        raise ValueError(
+            "Enter the SMS recipient in international format, for example +41791234567."
+        )
+
     return OperatorSettings(
         recipient,
         source,
@@ -99,6 +115,8 @@ def validate_operator_settings(
         transfer_enabled,
         destination,
         transfer_seconds,
+        sms_enabled,
+        phone_number,
     )
 
 
@@ -108,6 +126,7 @@ def apply_operator_settings(
     config = copy.deepcopy(existing)
     email = config.setdefault("email", {})
     transfer = config.setdefault("transfer", {})
+    sms = config.setdefault("sms", {})
     email["to_addresses"] = [settings.recipient]
     config["watch_folder"] = str(settings.watch_folder)
     config["check_interval_seconds"] = settings.acquisition_interval_seconds
@@ -122,6 +141,8 @@ def apply_operator_settings(
     else:
         transfer.setdefault("max_files_per_check", None)
     transfer.setdefault("max_untransferred_files", 10_000)
+    sms["enabled"] = settings.sms_enabled
+    sms["to_number"] = settings.sms_to_number if settings.sms_enabled else ""
     return config
 
 
@@ -137,6 +158,22 @@ def validate_candidate_config(config: dict[str, Any]) -> Config:
         )
     if username and not password and not os.environ.get(password_env, ""):
         raise ValueError("The sender Gmail app password is not configured.")
+
+    sms = config.get("sms", {})
+    if sms.get("enabled", False):
+        account_sid = str(sms.get("account_sid", ""))
+        auth_token = str(sms.get("auth_token", ""))
+        auth_token_env = str(sms.get("auth_token_env", ""))
+        from_number = str(sms.get("from_number", ""))
+        if not account_sid or account_sid.startswith("PASTE_"):
+            raise ValueError(
+                "Twilio has not been configured. Ask the administrator to set "
+                "sms.account_sid in C:\\ProgramData\\MICWatcher\\watcher_config.json."
+            )
+        if not auth_token and not os.environ.get(auth_token_env, ""):
+            raise ValueError("The Twilio Auth Token is not configured.")
+        if not from_number.startswith("+"):
+            raise ValueError("The Twilio sender phone number is not configured.")
 
     validation_path = start_watcher.CONFIG_PATH.with_name("watcher_config.validation.tmp")
     validation_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
@@ -186,7 +223,11 @@ class MonitorWorker(threading.Thread):
     def run(self) -> None:
         exit_message = "Monitoring stopped."
         try:
-            watcher = Watcher(self.config, Mailer(self.config.email))
+            watcher = Watcher(
+                self.config,
+                Mailer(self.config.email),
+                sms_sender=SmsSender(self.config.sms),
+            )
             next_acquisition = time.monotonic()
             next_transfer = time.monotonic() if self.config.transfer.enabled else float("inf")
             self.events.put(("started", None))
@@ -227,7 +268,7 @@ class MICWatcherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("MICWatcher")
-        self.root.minsize(720, 560)
+        self.root.minsize(720, 650)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.events: "queue.Queue[tuple[str, Any]]" = queue.Queue()
@@ -242,10 +283,13 @@ class MICWatcherApp:
         recipients = email.get("to_addresses") or [""]
         recipient = recipients[0] if isinstance(recipients, list) else str(recipients)
         transfer = config.get("transfer", {})
+        sms = config.get("sms", {})
 
         self.recipient = tk.StringVar(value=recipient)
         self.watch_folder = tk.StringVar(value=str(config.get("watch_folder", "")))
         self.acquisition_minutes = tk.StringVar(value="60")
+        self.sms_enabled = tk.BooleanVar(value=bool(sms.get("enabled", False)))
+        self.sms_to_number = tk.StringVar(value=str(sms.get("to_number", "")))
         self.transfer_enabled = tk.BooleanVar(value=bool(transfer.get("enabled", False)))
         self.destination_folder = tk.StringVar(value="")
         self.transfer_minutes = tk.StringVar(value="30")
@@ -255,6 +299,7 @@ class MICWatcherApp:
         self.transfer_detail = tk.StringVar(value="Transfer status will appear here.")
 
         self.build_ui()
+        self.update_sms_controls()
         self.update_transfer_controls()
         self.root.after(250, self.process_events)
 
@@ -299,16 +344,32 @@ class MICWatcherApp:
         recipient_entry.grid(row=0, column=1, columnspan=2, sticky="ew", pady=6)
         self.form_widgets.append(recipient_entry)
 
+        sms_check = ttk.Checkbutton(
+            form,
+            text="Send one SMS for each new warning (small per-message cost)",
+            variable=self.sms_enabled,
+            command=self.update_sms_controls,
+        )
+        sms_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        self.form_widgets.append(sms_check)
+
+        ttk.Label(form, text="SMS recipient number").grid(
+            row=2, column=0, sticky="w", padx=(0, 10), pady=6
+        )
+        self.sms_number_entry = ttk.Entry(form, textvariable=self.sms_to_number)
+        self.sms_number_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=6)
+        self.form_widgets.append(self.sms_number_entry)
+
         self.add_path_row(
-            form, 1, "Local acquisition folder", self.watch_folder, self.browse_source
+            form, 3, "Local acquisition folder", self.watch_folder, self.browse_source
         )
 
         ttk.Label(form, text="Missing-file check").grid(
-            row=2, column=0, sticky="w", padx=(0, 10), pady=6
+            row=4, column=0, sticky="w", padx=(0, 10), pady=6
         )
         acquisition_entry = ttk.Entry(form, textvariable=self.acquisition_minutes, width=12)
-        acquisition_entry.grid(row=2, column=1, sticky="w", pady=6)
-        ttk.Label(form, text="minutes").grid(row=2, column=1, sticky="w", padx=(90, 0))
+        acquisition_entry.grid(row=4, column=1, sticky="w", pady=6)
+        ttk.Label(form, text="minutes").grid(row=4, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(acquisition_entry)
 
         transfer_check = ttk.Checkbutton(
@@ -317,27 +378,27 @@ class MICWatcherApp:
             variable=self.transfer_enabled,
             command=self.update_transfer_controls,
         )
-        transfer_check.grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        transfer_check.grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 4))
         self.form_widgets.append(transfer_check)
 
         ttk.Label(form, text="Transfer destination").grid(
-            row=4, column=0, sticky="w", padx=(0, 10), pady=6
+            row=6, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.destination_entry = ttk.Entry(form, textvariable=self.destination_folder)
-        self.destination_entry.grid(row=4, column=1, sticky="ew", pady=6)
+        self.destination_entry.grid(row=6, column=1, sticky="ew", pady=6)
         self.destination_button = ttk.Button(
             form, text="Browse...", command=self.browse_destination
         )
-        self.destination_button.grid(row=4, column=2, padx=(8, 0), pady=6)
+        self.destination_button.grid(row=6, column=2, padx=(8, 0), pady=6)
         self.form_widgets.extend([self.destination_entry, self.destination_button])
 
         ttk.Label(form, text="Transfer check").grid(
-            row=5, column=0, sticky="w", padx=(0, 10), pady=6
+            row=7, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.transfer_entry = ttk.Entry(form, textvariable=self.transfer_minutes, width=12)
-        self.transfer_entry.grid(row=5, column=1, sticky="w", pady=6)
+        self.transfer_entry.grid(row=7, column=1, sticky="w", pady=6)
         self.transfer_unit = ttk.Label(form, text="minutes")
-        self.transfer_unit.grid(row=5, column=1, sticky="w", padx=(90, 0))
+        self.transfer_unit.grid(row=7, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(self.transfer_entry)
 
         status_frame = ttk.LabelFrame(outer, text="Status", padding=12)
@@ -390,6 +451,10 @@ class MICWatcherApp:
         self.transfer_entry.configure(state=state)
         self.transfer_unit.configure(state=state)
 
+    def update_sms_controls(self) -> None:
+        enabled = self.sms_enabled.get() and self.worker is None
+        self.sms_number_entry.configure(state="normal" if enabled else "disabled")
+
     def set_form_enabled(self, enabled: bool) -> None:
         for widget in self.form_widgets:
             try:
@@ -397,6 +462,7 @@ class MICWatcherApp:
             except tk.TclError:
                 pass
         if enabled:
+            self.update_sms_controls()
             self.update_transfer_controls()
 
     def start_monitoring(self) -> None:
@@ -410,6 +476,8 @@ class MICWatcherApp:
                 self.transfer_enabled.get(),
                 self.destination_folder.get(),
                 self.transfer_minutes.get(),
+                self.sms_enabled.get(),
+                self.sms_to_number.get(),
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Cannot start MICWatcher", str(exc), parent=self.root)

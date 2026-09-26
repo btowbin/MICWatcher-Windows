@@ -14,6 +14,15 @@
     "max_files_per_check": null,
     "max_untransferred_files": 10000
   },
+  "sms": {
+    "enabled": false,
+    "account_sid": "PASTE_TWILIO_ACCOUNT_SID_HERE",
+    "auth_token": "PASTE_TWILIO_AUTH_TOKEN_HERE",
+    "auth_token_env": "MICWATCHER_TWILIO_AUTH_TOKEN",
+    "from_number": "+15017122661",
+    "to_number": "",
+    "timeout_seconds": 30
+  },
   "email": {
     "smtp_host": "smtp.gmail.com",
     "smtp_port": 587,

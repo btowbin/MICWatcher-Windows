@@ -7,8 +7,9 @@ This guide is for microscope operators. The Gmail sender account and all-users l
 1. Start the microscopy experiment normally and confirm that it is saving images.
 2. Double-click **MICWatcher** on the Desktop or open **MICWatcher** from the Start menu.
 3. Enter the alert email address.
-4. Next to **Local acquisition folder**, click **Browse...**.
-5. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
+4. If an SMS warning is wanted, select **Send one SMS for each new warning** and enter the recipient's telephone number in international format, for example `+41791234567`. Sending an SMS has a small per-message cost.
+5. Next to **Local acquisition folder**, click **Browse...**.
+6. Navigate to the folder in which the experiment is saving files and click **Select Folder**.
 
 You can alternatively open the local folder in File Explorer, click the address bar or press Ctrl+L, copy the path with Ctrl+C, and paste it into the MICWatcher path field with Ctrl+V.
 
@@ -46,11 +47,13 @@ Use a separate destination for each microscope. The destination cannot be inside
 The GUI contains:
 
 1. **Alert email address** — the user who should receive warnings and reports.
-2. **Local acquisition folder** — type, paste, or browse to the experiment folder.
-3. **Missing-file check** — 60 minutes by default.
-4. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
-5. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
-6. **Transfer check** — 30 minutes by default.
+2. **Send one SMS for each new warning** — optional; SMS has a small per-message cost.
+3. **SMS recipient number** — required only when SMS is enabled; use international format such as `+41791234567`.
+4. **Local acquisition folder** — type, paste, or browse to the experiment folder.
+5. **Missing-file check** — 60 minutes by default.
+6. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
+7. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
+8. **Transfer check** — 30 minutes by default.
 
 Review the settings, then click **Start monitoring**.
 
@@ -73,6 +76,15 @@ Review the settings, then click **Start monitoring**.
 - A transfer failure generates one warning. Repeated failures remain silent until a successful transfer generates a recovery email.
 - Every 24 hours, it sends a report containing file count, disk space, and transfer status.
 - If the untransferred backlog exceeds 10,000 files, it sends a safety-stop warning and exits without deleting those files.
+
+## SMS behavior
+
+- SMS is optional and has a small Twilio per-message cost.
+- The first missing-file warning for an interruption sends one SMS.
+- The first transfer-failure warning sends one SMS.
+- The second missing-file email, repeated failures, recoveries, daily reports, and routine status updates do not send SMS.
+- SMS contains only a short warning and asks the recipient to read the email for details.
+- While using a Twilio trial account, the recipient number must first be verified in the Twilio Console.
 
 ## Troubleshooting
 
