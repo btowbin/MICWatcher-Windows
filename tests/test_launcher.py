@@ -35,6 +35,35 @@ class LauncherTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 install_windows_launcher.find_gui_python()
 
+    def test_installer_prefers_direct_machine_wide_pythonw(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            python_root = root / "Program Files" / "Python314"
+            python_root.mkdir(parents=True)
+            python_exe = python_root / "python.exe"
+            pythonw_exe = python_root / "pythonw.exe"
+            python_exe.touch()
+            pythonw_exe.touch()
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PUBLIC": str(root / "Users" / "Public"),
+                        "USERPROFILE": str(root / "Users" / "administrator"),
+                    },
+                ),
+                patch.object(install_windows_launcher.sys, "executable", str(python_exe)),
+                patch.object(
+                    install_windows_launcher.shutil,
+                    "which",
+                    return_value=str(root / "Windows" / "pyw.exe"),
+                ),
+            ):
+                executable, arguments = install_windows_launcher.find_gui_python()
+
+            self.assertEqual(pythonw_exe.resolve(), executable)
+            self.assertEqual((), arguments)
+
     def test_all_users_install_uses_shared_locations_and_preserves_config(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

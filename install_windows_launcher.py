@@ -48,20 +48,25 @@ def find_gui_python() -> tuple[Path, tuple[str, ...]]:
             return None
         return candidate
 
-    launcher = shutil.which("pyw.exe")
-    if launcher:
-        shared_launcher = shared_path(launcher)
-        if shared_launcher is not None:
-            return shared_launcher, ("-3",)
+    # Prefer the interpreter beside the Python executable running this installer.
+    # A shared pyw.exe launcher can select runtimes from per-user registry state,
+    # causing a shortcut installed by an administrator to do nothing for domain
+    # users. A direct Program Files pythonw.exe path is account-independent.
+    sibling = Path(sys.executable).resolve().with_name("pythonw.exe")
+    shared_sibling = shared_path(sibling)
+    if sibling.is_file() and shared_sibling is not None:
+        return shared_sibling, ()
+
     pythonw = shutil.which("pythonw.exe")
     if pythonw:
         shared_pythonw = shared_path(pythonw)
         if shared_pythonw is not None:
             return shared_pythonw, ()
-    sibling = Path(sys.executable).resolve().with_name("pythonw.exe")
-    shared_sibling = shared_path(sibling)
-    if sibling.is_file() and shared_sibling is not None:
-        return shared_sibling, ()
+    launcher = shutil.which("pyw.exe")
+    if launcher:
+        shared_launcher = shared_path(launcher)
+        if shared_launcher is not None:
+            return shared_launcher, ("-3",)
     raise RuntimeError(
         "A windowless Python 3 launcher (pyw.exe or pythonw.exe) was not found. "
         "Install Python 3 for all users, including Tcl/Tk support."

@@ -117,6 +117,14 @@ Reconnect it in File Explorer. MICWatcher retains local files when transfer fail
 
 Ask the administrator to confirm that Python 3 was installed for all users with Tcl/Tk support. Operational errors are recorded in `C:\ProgramData\MICWatcher\microscope_watcher.log`.
 
+For diagnosis, open PowerShell while signed in as the affected user and run:
+
+```powershell
+& "C:\Program Files\Python314\python.exe" "C:\Program Files\MICWatcher\micwatcher_gui.py"
+```
+
+Unlike the windowless desktop shortcut, this command displays any startup error. If it opens the GUI, rerun the current MICWatcher installer as administrator to rebuild the shared shortcut with the direct machine-wide Python path.
+
 **MICWatcher says another copy is already running**
 
 Another signed-in Windows account may already be running it. Return to that account and stop its MICWatcher window before starting a new copy.

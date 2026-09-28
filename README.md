@@ -66,6 +66,8 @@ python install_windows_launcher.py
 
 This creates a **MICWatcher** shortcut on the Public Desktop and in the common Start menu, so every Windows account can use it. It opens a small graphical application without a command window.
 
+The installer binds the shortcut directly to the machine-wide `pythonw.exe` under `C:\Program Files`, rather than relying on Python launcher registrations that can differ between local and domain accounts.
+
 Operators can:
 
 - Enter an experiment or microscope name that identifies every notification.
