@@ -152,6 +152,43 @@ class LauncherTests(unittest.TestCase):
             self.assertFalse(settings.transfer_enabled)
             self.assertIsNone(settings.destination_folder)
 
+    def test_gui_rejects_empty_or_missing_required_folders(self):
+        with self.assertRaisesRegex(ValueError, "local acquisition folder"):
+            micwatcher_gui.validate_operator_settings(
+                "operator@example.org", "", "60", False, "", "30"
+            )
+        with self.assertRaisesRegex(ValueError, "local acquisition folder"):
+            micwatcher_gui.validate_operator_settings(
+                "operator@example.org", '  ""  ', "60", False, "", "30"
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            missing_source = source / "missing-source"
+            missing_destination = source / "missing-destination"
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org",
+                    str(missing_source),
+                    "60",
+                    False,
+                    "",
+                    "30",
+                )
+            with self.assertRaisesRegex(ValueError, "transfer destination folder"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org", str(source), "60", True, '  ""  ', "30"
+                )
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                micwatcher_gui.validate_operator_settings(
+                    "operator@example.org",
+                    str(source),
+                    "60",
+                    True,
+                    str(missing_destination),
+                    "30",
+                )
+
     def test_sms_number_is_normalized_and_credentials_are_preserved(self):
         with tempfile.TemporaryDirectory() as temporary:
             settings = micwatcher_gui.validate_operator_settings(

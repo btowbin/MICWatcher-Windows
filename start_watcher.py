@@ -97,7 +97,10 @@ def save_config(config: dict[str, Any]) -> None:
 
 def configure() -> bool:
     config = load_editable_config()
-    original_watch_folder = expanded_path(str(config.get("watch_folder", Path.home())))
+    original_watch_value = str(config.get("watch_folder", "")).strip()
+    original_watch_folder = (
+        expanded_path(original_watch_value) if original_watch_value else None
+    )
     email = config.setdefault("email", {})
     recipients = email.get("to_addresses") or [""]
     current_recipient = recipients[0] if isinstance(recipients, list) else str(recipients)
@@ -110,9 +113,9 @@ def configure() -> bool:
         print("Enter a valid email address.")
         recipient = prompt_text("Alert email address", current_recipient)
 
-    watch_folder = expanded_path(
-        prompt_text("Local acquisition folder", str(config.get("watch_folder", Path.home())))
-    )
+    # Acquisition folders are experiment-specific. Require a fresh explicit
+    # choice instead of silently reusing a saved folder or the user's home.
+    watch_folder = expanded_path(prompt_text("Local acquisition folder"))
     if not watch_folder.is_dir():
         print(f"\nCannot start: local folder does not exist: {watch_folder}")
         return False
@@ -163,7 +166,7 @@ def configure() -> bool:
     transfer.setdefault("max_untransferred_files", 10_000)
     save_config(config)
 
-    if watch_folder != original_watch_folder:
+    if original_watch_folder is None or watch_folder != original_watch_folder:
         state_value = Path(str(config.get("state_file", "watcher_state.json")))
         state_path = state_value if state_value.is_absolute() else CONFIG_PATH.parent / state_value
         if state_path.exists():

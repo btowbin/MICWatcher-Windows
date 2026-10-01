@@ -1,6 +1,6 @@
 {
   "microscope_name": "Microscope 1",
-  "watch_folder": "C:\\MicroscopeData",
+  "watch_folder": "",
   "recursive": true,
   "check_interval_seconds": 3600,
   "daily_report_interval_hours": 24,

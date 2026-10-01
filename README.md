@@ -84,7 +84,7 @@ Keep the GUI open while the experiment is running. Closing it while monitoring a
 
 Only one watcher can run from the shared installation at a time, including across different signed-in Windows accounts. The installer also refuses to update the program while the watcher is running.
 
-The default missing-file interval is 60 minutes. The default transfer interval is 30 minutes. There is intentionally no default transfer destination.
+The default missing-file interval is 60 minutes and the default transfer interval is 30 minutes. There is intentionally no default acquisition folder or transfer destination. Both folder choices are cleared for every new GUI session. MICWatcher refuses to start if the local acquisition folder is blank or nonexistent, or if transfer is enabled while its destination is blank or nonexistent.
 
 See [WINDOWS_LAUNCHER_GUIDE.md](WINDOWS_LAUNCHER_GUIDE.md) for the complete operator workflow.
 

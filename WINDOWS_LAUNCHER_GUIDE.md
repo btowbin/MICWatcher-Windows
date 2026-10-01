@@ -61,6 +61,8 @@ The GUI contains:
 
 Review the settings, then click **Start monitoring**.
 
+MICWatcher does not provide a default for either folder. It refuses to start if the local acquisition folder is blank or does not exist. When network transfer is selected, it also refuses to start if the transfer destination is blank, disconnected, or does not exist. A message identifies the field that must be corrected.
+
 Every click on **Start monitoring** starts a new monitoring run with fresh warning and report state. This also applies after Stop/Start or closing and reopening MICWatcher, even if the experiment name and folders are unchanged. Consequently, restarting during an existing interruption allows warning emails and SMS to be sent again after a full check interval.
 
 ## While MICWatcher is running
