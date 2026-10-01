@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import tempfile
 import unittest
 from dataclasses import replace
@@ -245,6 +247,33 @@ class WatcherTests(unittest.TestCase):
         self.assertFalse(source.exists())
         self.assertEqual(b"image-data", destination.read_bytes())
         self.assertEqual(0, watcher.state["local_file_count"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows ReadOnly attribute test")
+    def test_read_only_source_is_copied_verified_then_deleted(self):
+        self.enable_transfer()
+        watcher = self.watcher()
+        watcher.check_once()
+        source = self.folder / "read-only.tif"
+        source.write_bytes(b"read-only-image-data")
+        os.chmod(source, stat.S_IREAD)
+
+        def make_source_writable_for_cleanup():
+            if source.exists():
+                os.chmod(source, source.stat().st_mode | stat.S_IWRITE)
+
+        self.addCleanup(make_source_writable_for_cleanup)
+        self.assertFalse(source.stat().st_mode & stat.S_IWRITE)
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        self.assertTrue(source.exists(), "file must remain while stability is established")
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once()
+        destination = self.destination / "read-only.tif"
+        self.assertFalse(source.exists())
+        self.assertEqual(b"read-only-image-data", destination.read_bytes())
+        self.assertEqual(destination.stat().st_size, len(b"read-only-image-data"))
 
     def test_existing_file_at_startup_is_transferred_when_stable(self):
         self.enable_transfer()

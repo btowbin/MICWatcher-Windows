@@ -11,6 +11,7 @@ import shutil
 import smtplib
 import socket
 import ssl
+import stat
 import sys
 import time
 import urllib.error
@@ -562,6 +563,18 @@ class Watcher:
             os.replace(partial, destination)
             if destination.stat().st_size != record.size:
                 raise OSError(f"Copied file size verification failed: {destination}")
+
+            # Windows refuses to delete a file while its ReadOnly attribute is set.
+            # Clear only that attribute, and only after the destination copy has
+            # been finalized and its size verified.
+            if os.name == "nt":
+                source_mode = record.path.stat().st_mode
+                if not source_mode & stat.S_IWRITE:
+                    os.chmod(record.path, source_mode | stat.S_IWRITE)
+                    LOG.info(
+                        "Cleared read-only attribute before deleting verified source: %s",
+                        record.path,
+                    )
             record.path.unlink()
             return destination
         except Exception:
