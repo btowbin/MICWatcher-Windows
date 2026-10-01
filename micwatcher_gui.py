@@ -600,7 +600,12 @@ class MICWatcherApp:
         if not self.transfer_enabled.get():
             self.transfer_detail.set("File transfer: disabled")
             return
-        transfer_status = "FAILED" if state.get("transfer_failed") else "OK"
+        conflicts = state.get("destination_conflicts", [])
+        if not isinstance(conflicts, list):
+            conflicts = []
+        transfer_status = (
+            "FAILED" if state.get("transfer_failed") else "ATTENTION" if conflicts else "OK"
+        )
         pending = int(state.get("transfer_pending_count", 0))
         total = int(state.get("files_transferred_total", 0))
         text = (
@@ -609,6 +614,11 @@ class MICWatcherApp:
         )
         if state.get("last_transfer_error"):
             text += f"\nLast error: {state['last_transfer_error']}"
+        if conflicts:
+            shown = ", ".join(str(name) for name in conflicts[:5])
+            if len(conflicts) > 5:
+                shown += f", and {len(conflicts) - 5:,} more"
+            text += f"\nAlready at destination; kept locally: {shown}"
         self.transfer_detail.set(text)
 
     def finish_worker(self, message: str) -> None:

@@ -129,6 +129,10 @@ class FileStillChanging(Exception):
     """Raised when an acquisition file changes while it is being copied."""
 
 
+class DestinationAlreadyExists(FileExistsError):
+    """Raised when a transfer would overwrite an existing destination file."""
+
+
 class TransferBacklogExceeded(RuntimeError):
     """Raised after the transfer-backlog safety stop has been reported."""
 
@@ -533,7 +537,9 @@ class Watcher:
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         if destination.exists():
-            raise FileExistsError(f"Destination already exists; local source retained: {destination}")
+            raise DestinationAlreadyExists(
+                f"Destination already exists; local source retained: {destination}"
+            )
 
         partial = destination.with_name(destination.name + ".micwatcher-part")
         try:
@@ -550,7 +556,9 @@ class Watcher:
             ):
                 raise FileStillChanging(str(record.path))
             if destination.exists():
-                raise FileExistsError(f"Destination appeared during copy: {destination}")
+                raise DestinationAlreadyExists(
+                    f"Destination appeared during copy; local source retained: {destination}"
+                )
             os.replace(partial, destination)
             if destination.stat().st_size != record.size:
                 raise OSError(f"Copied file size verification failed: {destination}")
@@ -645,6 +653,19 @@ class Watcher:
 
         transferred = 0
         limit = self.config.transfer.max_files_per_check
+        previous_conflicts = self.state.get("destination_conflicts", [])
+        if not isinstance(previous_conflicts, list):
+            previous_conflicts = []
+        previous_conflict_set = {str(relative) for relative in previous_conflicts}
+        known_conflicts = {
+            relative for relative in previous_conflict_set if relative in records
+        }
+        reported_conflicts = self.state.get("reported_destination_conflicts", [])
+        if not isinstance(reported_conflicts, list):
+            reported_conflicts = []
+        reported_conflict_set = {
+            str(relative) for relative in reported_conflicts if str(relative) in records
+        }
         for relative in sorted(records):
             if limit is not None and transferred >= limit:
                 break
@@ -664,12 +685,17 @@ class Watcher:
                 LOG.info("Deferred file that changed during transfer: %s", record.path)
                 entry["unchanged_since"] = observed_at.isoformat()
                 continue
+            except DestinationAlreadyExists as exc:
+                known_conflicts.add(relative)
+                LOG.warning("Transfer skipped for %s: %s", record.path, exc)
+                continue
             except Exception as exc:
                 LOG.error("Transfer failed for %s: %s", record.path, exc)
                 self._record_transfer_failure(observed_at, record, exc)
                 break
 
             transferred += 1
+            known_conflicts.discard(relative)
             pending.pop(relative, None)
             self.state["last_transfer_success_at"] = observed_at.isoformat()
             self.state["last_transferred_file"] = str(destination)
@@ -693,6 +719,34 @@ class Watcher:
                 self.state.pop("transfer_failed_at", None)
                 self.state.pop("last_transfer_error", None)
 
+        conflict_names = sorted(known_conflicts)
+        self.state["destination_conflicts"] = conflict_names
+        self.state["destination_conflict_count"] = len(conflict_names)
+        unreported_conflicts = known_conflicts - reported_conflict_set
+        if unreported_conflicts:
+            listed_files = "\n".join(f"- {name}" for name in conflict_names)
+            subject = (
+                f"[TRANSFER REPORT] {self.config.microscope_name}: "
+                f"{len(conflict_names):,} file(s) not copied"
+            )
+            body = (
+                f"Some files for {self.config.microscope_name} were not copied because files "
+                "with the same names already exist at the destination. Other eligible files "
+                "continued to transfer normally.\n\n"
+                f"Local folder: {self.config.watch_folder}\n"
+                f"Transfer destination: {self.config.transfer.destination_folder}\n"
+                f"Observed: {format_timestamp(observed_at)}\n\n"
+                "Files retained in the local folder:\n"
+                f"{listed_files}\n\n"
+                "Resolve each conflict by removing or renaming one of the files. MICWatcher "
+                "will retry the retained local files on later checks."
+            )
+            if self._send(subject, body):
+                reported_conflict_set.update(known_conflicts)
+        self.state["reported_destination_conflicts"] = sorted(
+            reported_conflict_set & known_conflicts
+        )
+
         self.state["transfer_pending"] = pending
         self.state["transfer_pending_count"] = len(pending)
         return transferred
@@ -700,7 +754,14 @@ class Watcher:
     def _transfer_report_text(self) -> str:
         if not self.config.transfer.enabled:
             return "File transfer: DISABLED"
-        status = "FAILED" if self.state.get("transfer_failed", False) else "OK"
+        conflicts = self.state.get("destination_conflicts", [])
+        if not isinstance(conflicts, list):
+            conflicts = []
+        status = (
+            "FAILED"
+            if self.state.get("transfer_failed", False)
+            else "ATTENTION" if conflicts else "OK"
+        )
         lines = [
             f"File transfer: {status}",
             f"Transfer destination: {self.config.transfer.destination_folder}",
@@ -715,6 +776,9 @@ class Watcher:
                 + format_timestamp(parse_timestamp(self.state.get("transfer_failed_at")))
             )
             lines.append(f"Last transfer error: {self.state.get('last_transfer_error', 'unknown')}")
+        if conflicts:
+            lines.append(f"Files not copied because they already exist: {len(conflicts):,}")
+            lines.extend(f"- {name}" for name in conflicts)
         return "\n".join(lines)
 
     def check_once(self, check_acquisition: bool = True, check_transfer: bool = True) -> None:

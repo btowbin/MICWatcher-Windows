@@ -415,7 +415,7 @@ class WatcherTests(unittest.TestCase):
         watcher.check_once(False, True)
         self.assertEqual(1, len(self.telegram_sender.messages))
 
-    def test_destination_collision_preserves_local_source(self):
+    def test_destination_collision_is_reported_and_other_files_continue(self):
         self.enable_transfer()
         self.destination.mkdir()
         destination = self.destination / "collision.tif"
@@ -425,6 +425,8 @@ class WatcherTests(unittest.TestCase):
         self.mailer.messages.clear()
         source = self.folder / "collision.tif"
         source.write_bytes(b"new-local-data")
+        transferable = self.folder / "other.tif"
+        transferable.write_bytes(b"other-data")
 
         self.time += timedelta(minutes=1)
         watcher.check_once()
@@ -432,9 +434,44 @@ class WatcherTests(unittest.TestCase):
         watcher.check_once()
         self.assertEqual(b"new-local-data", source.read_bytes())
         self.assertEqual(b"existing", destination.read_bytes())
+        self.assertFalse(transferable.exists())
+        self.assertEqual(b"other-data", (self.destination / "other.tif").read_bytes())
         self.assertEqual(
-            1, sum("TRANSFER WARNING" in subject for subject, _ in self.mailer.messages)
+            1, sum("TRANSFER REPORT" in subject for subject, _ in self.mailer.messages)
         )
+        self.assertFalse(
+            any("TRANSFER WARNING" in subject for subject, _ in self.mailer.messages)
+        )
+        report = next(
+            body for subject, body in self.mailer.messages if "TRANSFER REPORT" in subject
+        )
+        self.assertIn("collision.tif", report)
+        self.assertEqual(["collision.tif"], watcher.state["destination_conflicts"])
+        self.assertEqual(1, watcher.state["transfer_pending_count"])
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.assertEqual(
+            1, sum("TRANSFER REPORT" in subject for subject, _ in self.mailer.messages)
+        )
+
+    def test_daily_report_lists_destination_conflicts(self):
+        self.enable_transfer()
+        self.destination.mkdir()
+        (self.destination / "duplicate.tif").write_bytes(b"existing")
+        (self.folder / "duplicate.tif").write_bytes(b"local")
+        watcher = self.watcher()
+        watcher.check_once()
+
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(hours=24)
+        watcher.check_once(True, False)
+
+        reports = [body for subject, body in self.mailer.messages if "DAILY REPORT" in subject]
+        self.assertIn("File transfer: ATTENTION", reports[-1])
+        self.assertIn("Files not copied because they already exist: 1", reports[-1])
+        self.assertIn("- duplicate.tif", reports[-1])
 
     def test_daily_report_contains_transfer_status(self):
         self.enable_transfer()
