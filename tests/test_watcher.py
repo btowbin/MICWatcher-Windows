@@ -484,6 +484,25 @@ class WatcherTests(unittest.TestCase):
             1, sum("TRANSFER REPORT" in subject for subject, _ in self.mailer.messages)
         )
 
+        second_destination = self.destination / "second-collision.tif"
+        second_destination.write_bytes(b"existing-second")
+        second_source = self.folder / "second-collision.tif"
+        second_source.write_bytes(b"new-second")
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+        self.time += timedelta(minutes=1)
+        watcher.check_once(False, True)
+
+        self.assertTrue(second_source.exists())
+        self.assertEqual(
+            1, sum("TRANSFER REPORT" in subject for subject, _ in self.mailer.messages)
+        )
+        self.assertEqual(
+            ["collision.tif", "second-collision.tif"],
+            watcher.state["destination_conflicts"],
+        )
+        self.assertTrue(watcher.state["destination_conflict_report_sent"])
+
     def test_daily_report_lists_destination_conflicts(self):
         self.enable_transfer()
         self.destination.mkdir()

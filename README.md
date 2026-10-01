@@ -100,7 +100,7 @@ Navigate to or create the experiment's destination folder, then select it with *
 
 Files present when MICWatcher starts are included. A file must remain unchanged for `stable_for_seconds` before it is transferred. The destination preserves the directory structure relative to the watched folder.
 
-If a file already exists at the destination, MICWatcher keeps the local source, records its relative path, and continues copying the other eligible files. It sends one transfer report listing the conflicts; unchanged conflicts are not re-emailed on every check. Active conflicts and their file names also appear in the GUI and daily report. After a destination conflict is resolved, MICWatcher retries the retained local file on a later check.
+If a file already exists at the destination, MICWatcher keeps the local source, records its relative path, and continues copying the other eligible files. It sends at most one destination-conflict email per monitoring run, even if further conflicting files are discovered during later checks. Active conflicts and their file names still appear in the GUI and daily report. After a destination conflict is resolved, MICWatcher retries the retained local file on a later check.
 
 If another copy or local deletion fails, the source is retained. One transfer-failure email is sent, repeated failures remain silent, and a recovery email is sent after a later successful transfer. If more than 10,000 files remain untransferred, MICWatcher sends a safety-stop email and exits without deleting them.
 

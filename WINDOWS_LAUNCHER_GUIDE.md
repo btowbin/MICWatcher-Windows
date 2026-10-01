@@ -79,7 +79,7 @@ Every click on **Start monitoring** starts a new monitoring run with fresh warni
 - When no file activity is detected for one complete interval, MICWatcher sends the first warning.
 - If another complete interval passes without activity, it sends a second warning.
 - It then remains silent until file activity resumes and sends one recovery email.
-- If a file already exists at the destination, it remains in the local folder, the other files continue copying, and an email report lists the conflicting file names. The conflicts also appear in the status panel and daily report.
+- If a file already exists at the destination, it remains in the local folder and the other files continue copying. MICWatcher sends only one destination-conflict email during that monitoring run, even if later checks find more conflicts. The current conflicting file names appear in the status panel and daily report.
 - Another transfer failure generates one warning. Repeated failures remain silent until a successful transfer generates a recovery email.
 - Every 24 hours, it sends a report containing file count, disk space, and transfer status.
 - If the untransferred backlog exceeds 10,000 files, it sends a safety-stop warning and exits without deleting those files.

@@ -673,12 +673,6 @@ class Watcher:
         known_conflicts = {
             relative for relative in previous_conflict_set if relative in records
         }
-        reported_conflicts = self.state.get("reported_destination_conflicts", [])
-        if not isinstance(reported_conflicts, list):
-            reported_conflicts = []
-        reported_conflict_set = {
-            str(relative) for relative in reported_conflicts if str(relative) in records
-        }
         for relative in sorted(records):
             if limit is not None and transferred >= limit:
                 break
@@ -735,8 +729,7 @@ class Watcher:
         conflict_names = sorted(known_conflicts)
         self.state["destination_conflicts"] = conflict_names
         self.state["destination_conflict_count"] = len(conflict_names)
-        unreported_conflicts = known_conflicts - reported_conflict_set
-        if unreported_conflicts:
+        if conflict_names and not self.state.get("destination_conflict_report_sent", False):
             listed_files = "\n".join(f"- {name}" for name in conflict_names)
             subject = (
                 f"[TRANSFER REPORT] {self.config.microscope_name}: "
@@ -752,13 +745,12 @@ class Watcher:
                 "Files retained in the local folder:\n"
                 f"{listed_files}\n\n"
                 "Resolve each conflict by removing or renaming one of the files. MICWatcher "
-                "will retry the retained local files on later checks."
+                "will retry the retained local files on later checks. No further destination-"
+                "conflict emails will be sent during this monitoring run; the current list "
+                "remains available in the MICWatcher window and daily report."
             )
             if self._send(subject, body):
-                reported_conflict_set.update(known_conflicts)
-        self.state["reported_destination_conflicts"] = sorted(
-            reported_conflict_set & known_conflicts
-        )
+                self.state["destination_conflict_report_sent"] = True
 
         self.state["transfer_pending"] = pending
         self.state["transfer_pending_count"] = len(pending)
