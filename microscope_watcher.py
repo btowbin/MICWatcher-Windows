@@ -28,6 +28,11 @@ LOG = logging.getLogger("microscope_watcher")
 DEFAULT_CONFIG = "watcher_config.json"
 DEFAULT_STATE = "watcher_state.json"
 COPY_BUFFER_BYTES = 1024 * 1024
+IMAGE_EXTENSIONS = {
+    ".bmp", ".czi", ".dib", ".gif", ".heic", ".heif", ".j2c", ".j2k",
+    ".jp2", ".jpeg", ".jpg", ".jpx", ".lsm", ".lif", ".nd2", ".ome",
+    ".png", ".tif", ".tiff", ".webp",
+}
 
 
 def now_local() -> datetime:
@@ -109,6 +114,7 @@ class TransferConfig:
     stable_for_seconds: float
     max_files_per_check: int | None
     max_untransferred_files: int
+    preserve_top_level_non_images: bool = False
 
 
 @dataclass(frozen=True)
@@ -225,6 +231,9 @@ def load_config(path: Path) -> Config:
             stable_for_seconds=float(transfer.get("stable_for_seconds", 60)),
             max_files_per_check=batch_limit,
             max_untransferred_files=int(transfer.get("max_untransferred_files", 10_000)),
+            preserve_top_level_non_images=bool(
+                transfer.get("preserve_top_level_non_images", False)
+            ),
         ),
     )
     if result.check_interval_seconds <= 0:
@@ -529,15 +538,35 @@ class Watcher:
             return False
         return snapshot.file_count > int(old_count) or snapshot.newest_mtime_ns > int(old_mtime)
 
-    def _copy_then_delete(self, record: FileRecord) -> Path:
+    def _is_top_level_image(self, path: Path) -> bool:
+        return (
+            path.parent == self.config.watch_folder
+            and any(suffix.lower() in IMAGE_EXTENSIONS for suffix in path.suffixes)
+        )
+
+    def _delete_source_after_copy(self, record: FileRecord) -> bool:
+        if not self.config.transfer.preserve_top_level_non_images:
+            return True
+        if record.path.parent != self.config.watch_folder:
+            return True
+        return self._is_top_level_image(record.path)
+
+    def _destination_for(self, record: FileRecord) -> Path:
+        destination_root = self.config.transfer.destination_folder
+        if destination_root is None:
+            raise RuntimeError("Transfer destination is not configured")
+        return destination_root / record.path.relative_to(self.config.watch_folder)
+
+    def _copy_file(self, record: FileRecord, delete_source: bool) -> Path:
         destination_root = self.config.transfer.destination_folder
         if destination_root is None:
             raise RuntimeError("Transfer destination is not configured")
         relative = record.path.relative_to(self.config.watch_folder)
         destination = destination_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
+        overwrite = self.config.transfer.preserve_top_level_non_images
 
-        if destination.exists():
+        if destination.exists() and not overwrite:
             raise DestinationAlreadyExists(
                 f"Destination already exists; local source retained: {destination}"
             )
@@ -556,7 +585,7 @@ class Watcher:
                 or partial_after.st_size != record.size
             ):
                 raise FileStillChanging(str(record.path))
-            if destination.exists():
+            if destination.exists() and not overwrite:
                 raise DestinationAlreadyExists(
                     f"Destination appeared during copy; local source retained: {destination}"
                 )
@@ -564,18 +593,19 @@ class Watcher:
             if destination.stat().st_size != record.size:
                 raise OSError(f"Copied file size verification failed: {destination}")
 
-            # Windows refuses to delete a file while its ReadOnly attribute is set.
-            # Clear only that attribute, and only after the destination copy has
-            # been finalized and its size verified.
-            if os.name == "nt":
-                source_mode = record.path.stat().st_mode
-                if not source_mode & stat.S_IWRITE:
-                    os.chmod(record.path, source_mode | stat.S_IWRITE)
-                    LOG.info(
-                        "Cleared read-only attribute before deleting verified source: %s",
-                        record.path,
-                    )
-            record.path.unlink()
+            if delete_source:
+                # Windows refuses to delete a file while its ReadOnly attribute is set.
+                # Clear only that attribute, and only after the destination copy has
+                # been finalized and its size verified.
+                if os.name == "nt":
+                    source_mode = record.path.stat().st_mode
+                    if not source_mode & stat.S_IWRITE:
+                        os.chmod(record.path, source_mode | stat.S_IWRITE)
+                        LOG.info(
+                            "Cleared read-only attribute before deleting verified source: %s",
+                            record.path,
+                        )
+                record.path.unlink()
             return destination
         except Exception:
             try:
@@ -621,8 +651,23 @@ class Watcher:
             old_pending = {}
         records: dict[str, FileRecord] = {}
         pending: dict[str, dict[str, Any]] = {}
+        retained_fingerprints = self.state.get("retained_transfer_fingerprints", {})
+        if not isinstance(retained_fingerprints, dict):
+            retained_fingerprints = {}
         for record in snapshot.transfer_files:
             relative = str(record.path.relative_to(self.config.watch_folder))
+            delete_source = self._delete_source_after_copy(record)
+            if not delete_source:
+                fingerprint = retained_fingerprints.get(relative, {})
+                destination = self._destination_for(record)
+                if (
+                    isinstance(fingerprint, dict)
+                    and fingerprint.get("size") == record.size
+                    and fingerprint.get("mtime_ns") == record.mtime_ns
+                    and destination.is_file()
+                    and destination.stat().st_size == record.size
+                ):
+                    continue
             records[relative] = record
             previous = old_pending.get(relative, {})
             unchanged = (
@@ -686,8 +731,9 @@ class Watcher:
                 continue
 
             record = records[relative]
+            delete_source = self._delete_source_after_copy(record)
             try:
-                destination = self._copy_then_delete(record)
+                destination = self._copy_file(record, delete_source)
             except FileStillChanging:
                 LOG.info("Deferred file that changed during transfer: %s", record.path)
                 entry["unchanged_since"] = observed_at.isoformat()
@@ -702,6 +748,11 @@ class Watcher:
                 break
 
             transferred += 1
+            if not delete_source:
+                retained_fingerprints[relative] = {
+                    "size": record.size,
+                    "mtime_ns": record.mtime_ns,
+                }
             known_conflicts.discard(relative)
             pending.pop(relative, None)
             self.state["last_transfer_success_at"] = observed_at.isoformat()
@@ -709,7 +760,18 @@ class Watcher:
             self.state["files_transferred_total"] = int(
                 self.state.get("files_transferred_total", 0)
             ) + 1
-            LOG.info("Transferred %s to %s and removed the local source", record.path, destination)
+            if delete_source:
+                LOG.info(
+                    "Transferred %s to %s and removed the local source",
+                    record.path,
+                    destination,
+                )
+            else:
+                LOG.info(
+                    "Transferred %s to %s and retained the top-level non-image source",
+                    record.path,
+                    destination,
+                )
 
             if self.state.get("transfer_failed", False):
                 subject = (
@@ -754,6 +816,7 @@ class Watcher:
 
         self.state["transfer_pending"] = pending
         self.state["transfer_pending_count"] = len(pending)
+        self.state["retained_transfer_fingerprints"] = retained_fingerprints
         return transferred
 
     def _transfer_report_text(self) -> str:

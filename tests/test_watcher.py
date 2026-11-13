@@ -110,6 +110,14 @@ class WatcherTests(unittest.TestCase):
             ),
         )
 
+    def enable_top_level_non_image_protection(self, destination=None):
+        self.config = replace(
+            self.config,
+            transfer=TransferConfig(
+                True, destination or self.destination, 60, 60, None, 10_000, True
+            ),
+        )
+
     def enable_telegram(self):
         self.config = replace(
             self.config,
@@ -289,6 +297,70 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(
             b"existing-image", (self.destination / "already-present.tif").read_bytes()
         )
+
+    def test_top_level_non_image_protection_applies_deletion_policy(self):
+        self.enable_top_level_non_image_protection()
+        top_image = self.folder / "overview.OME.TIFF"
+        top_csv = self.folder / "positions.csv"
+        nested_image = self.folder / "experiment" / "image.jpg"
+        nested_csv = self.folder / "experiment" / "metadata.csv"
+        empty_folder = self.folder / "empty" / "nested"
+        nested_image.parent.mkdir()
+        empty_folder.mkdir(parents=True)
+        self.destination.mkdir()
+        (self.destination / "overview.OME.TIFF").write_bytes(b"old-top-image")
+        top_image.write_bytes(b"top-image")
+        top_csv.write_bytes(b"top-csv")
+        nested_image.write_bytes(b"nested-image")
+        nested_csv.write_bytes(b"nested-csv")
+
+        watcher = self.watcher()
+        watcher.check_once()
+        self.time += timedelta(seconds=61)
+        watcher.check_once()
+
+        self.assertFalse(top_image.exists())
+        self.assertTrue(top_csv.exists())
+        self.assertFalse(nested_image.exists())
+        self.assertFalse(nested_csv.exists())
+        self.assertEqual(b"top-image", (self.destination / "overview.OME.TIFF").read_bytes())
+        self.assertEqual(b"top-csv", (self.destination / "positions.csv").read_bytes())
+        self.assertEqual(
+            b"nested-image", (self.destination / "experiment" / "image.jpg").read_bytes()
+        )
+        self.assertEqual(
+            b"nested-csv", (self.destination / "experiment" / "metadata.csv").read_bytes()
+        )
+        self.assertFalse((self.destination / "empty").exists())
+
+    def test_protected_top_level_file_overwrites_only_after_source_changes(self):
+        self.enable_top_level_non_image_protection()
+        source = self.folder / "positions.csv"
+        source.write_bytes(b"new-data")
+        self.destination.mkdir()
+        destination = self.destination / "positions.csv"
+        destination.write_bytes(b"old-data")
+
+        watcher = self.watcher()
+        watcher.check_once()
+        self.time += timedelta(seconds=61)
+        watcher.check_once()
+
+        self.assertTrue(source.exists())
+        self.assertEqual(b"new-data", destination.read_bytes())
+        self.assertEqual(1, watcher.state["files_transferred_total"])
+
+        self.time += timedelta(seconds=61)
+        watcher.check_once()
+        self.assertEqual(1, watcher.state["files_transferred_total"])
+
+        source.write_bytes(b"newer-data")
+        self.time += timedelta(seconds=61)
+        watcher.check_once()
+        self.time += timedelta(seconds=61)
+        watcher.check_once()
+        self.assertEqual(b"newer-data", destination.read_bytes())
+        self.assertEqual(2, watcher.state["files_transferred_total"])
 
     def test_default_batch_has_no_file_count_limit(self):
         self.enable_transfer()

@@ -102,6 +102,8 @@ Files present when MICWatcher starts are included. A file must remain unchanged 
 
 If a file already exists at the destination, MICWatcher keeps the local source, records its relative path, and continues copying the other eligible files. It sends at most one destination-conflict email per monitoring run, even if further conflicting files are discovered during later checks. Active conflicts and their file names still appear in the GUI and daily report. After a destination conflict is resolved, MICWatcher retries the retained local file on a later check.
 
+The optional **Keep top-level non-image files after copying** setting atomically replaces files already present at the same relative path. Files copied from subfolders are deleted after verification. Files directly in the selected acquisition folder are deleted only when they have a recognized image extension (including TIFF, JPEG, PNG, BMP, GIF, WebP, OME-TIFF, CZI, LIF, LSM, and ND2). Top-level CSV and other non-image files are copied but retained, and are copied again during the same monitoring run only after they change. Empty source folders are not copied.
+
 If another copy or local deletion fails, the source is retained. One transfer-failure email is sent, repeated failures remain silent, and a recovery email is sent after a later successful transfer. If more than 10,000 files remain untransferred, MICWatcher sends a safety-stop email and exits without deleting them.
 
 ## Test the configuration
@@ -134,6 +136,7 @@ Telegram also sends only for a real first acquisition or transfer warning. A Tel
 - `C:\ProgramData\MICWatcher\microscope_watcher.log` records operation and errors.
 - `C:\ProgramData\MICWatcher\watcher_state.json` records the latest status of the current run for diagnostics. A new run deliberately ignores the previous file and starts fresh.
 - Existing stable files are transferred when transfer is enabled.
+- Top-level non-image protection can retain CSV and other non-image files while deleting copied images and all copied files from subfolders.
 - There is no default limit on the number of files transferred per check.
 
 ## Update

@@ -58,6 +58,7 @@ The GUI contains:
 8. **Transfer stable files to a network folder** — select this checkbox when transfer is required.
 9. **Transfer destination** — type, paste, or browse to the network folder. There is no default destination.
 10. **Transfer check** — 30 minutes by default.
+11. **Keep top-level non-image files after copying** - select this for acquisition folders whose top-level CSV or other control files must remain locally. Existing destination files at the same relative path are replaced; verified image copies from the top folder and all verified file copies from subfolders are deleted locally.
 
 Review the settings, then click **Start monitoring**.
 
@@ -71,6 +72,7 @@ Every click on **Start monitoring** starts a new monitoring run with fresh warni
 - The program starts monitoring immediately.
 - The status panel shows the latest check, activity, file count, pending transfers, and errors.
 - Existing stable files in the local folder are also transferred when transfer is enabled.
+- With top-level non-image protection enabled, top-level non-image files remain locally and are recopied only when they change; files in subfolders are removed after verified copying. Empty source folders are not copied.
 - Click **Stop** to end monitoring. If a check or file copy is active, MICWatcher waits for it to finish safely.
 - Closing the window while monitoring asks for confirmation before stopping.
 - Do not start a second copy of MICWatcher for the same installation.

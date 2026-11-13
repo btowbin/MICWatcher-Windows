@@ -134,6 +134,7 @@ def configure() -> bool:
 
     destination: Path | None = None
     transfer_interval = 1800.0
+    preserve_top_level_non_images = False
     if transfer_enabled:
         destination = expanded_path(
             prompt_text(
@@ -150,12 +151,17 @@ def configure() -> bool:
             "File-transfer check interval",
             transfer_interval,
         )
+        preserve_top_level_non_images = prompt_yes_no(
+            "Keep top-level non-image files after copying",
+            bool(transfer.get("preserve_top_level_non_images", False)),
+        )
 
     email["to_addresses"] = [recipient]
     config["watch_folder"] = str(watch_folder)
     config["check_interval_seconds"] = acquisition_interval
     transfer["enabled"] = transfer_enabled
     transfer["check_interval_seconds"] = transfer_interval
+    transfer["preserve_top_level_non_images"] = preserve_top_level_non_images
     if destination is not None:
         transfer["destination_folder"] = str(destination)
     transfer.setdefault("stable_for_seconds", 60)

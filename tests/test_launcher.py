@@ -343,6 +343,7 @@ class LauncherTests(unittest.TestCase):
                     "y",
                     str(destination),
                     "",
+                    "y",
                 ]
             )
             with (
@@ -361,6 +362,7 @@ class LauncherTests(unittest.TestCase):
             self.assertIsNone(updated["transfer"]["max_files_per_check"])
             self.assertEqual(10_000, updated["transfer"]["max_untransferred_files"])
             self.assertEqual(str(destination), updated["transfer"]["destination_folder"])
+            self.assertTrue(updated["transfer"]["preserve_top_level_non_images"])
 
 
 if __name__ == "__main__":

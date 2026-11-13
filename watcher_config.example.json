@@ -11,6 +11,7 @@
     "destination_folder": "",
     "check_interval_seconds": 1800,
     "stable_for_seconds": 60,
+    "preserve_top_level_non_images": false,
     "max_files_per_check": null,
     "max_untransferred_files": 10000
   },
