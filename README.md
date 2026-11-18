@@ -56,6 +56,27 @@ The graphical launcher asks for the experiment/microscope name, recipient, notif
 
 Every click on **Start monitoring** begins with fresh runtime state, including after Stop/Start or a complete application relaunch. Warning counts, transfer-failure suppression, daily-report timing, transfer-stability tracking, and session counters do not carry over, even when the same experiment name and folders are reused.
 
+## Optional autofocus drift alerts
+
+The Squid autofocus jobs 09 and 10 write a plain-text file, `strong_AF_drift_alert_log.txt`, when the autofocus of a group shows a sustained focus drift. MICWatcher can email the operator for every new `ALERT` line in that file. The jobs themselves send nothing.
+
+```json
+"drift_alerts": {
+  "enabled": false,
+  "log_filename": "strong_AF_drift_alert_log.txt",
+  "poll_interval_seconds": 60,
+  "missing_file_grace_seconds": null
+}
+```
+
+- The file is looked up **directly in the watched folder only**, never in subfolders. The Squid job must therefore save into the watched folder.
+- `poll_interval_seconds` is how often the file is read, independently of the missing-file check interval.
+- Each alert is emailed **once** per group and alert type (`DRIFT_LEVEL`, `DRIFT_TREND`, `DRIFT_TILT`). The repeated reminder lines that the job writes while the alert persists are ignored. A new email is sent only for another group or type, or when an earlier alert was closed by an `OK` line and the condition returns. Alerts found in the same read are combined into one email. Alerts are emailed only; no SMS or Telegram message is sent for them.
+- Lines already in the file when MICWatcher starts are not resent. A file that appears after MICWatcher started is read from its first line. A new `START` line in the same file (job restarted) resets the open alerts.
+- If drift alerts are enabled and the file has not appeared after `missing_file_grace_seconds` (default: the missing-file check interval), **one** email tells the operator that no drift alert log was found. MICWatcher keeps watching and uses the file once it exists.
+- Operators switch drift alerts on or off per run with the checkbox in the graphical launcher.
+- Stalled, crashed or aborted jobs are detected by the normal missing-file check, not by this feature.
+
 ## Install the graphical launcher
 
 Run once from the repository folder if it was not already run during the installation steps:

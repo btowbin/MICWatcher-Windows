@@ -46,6 +46,7 @@ class OperatorSettings:
     microscope_name: str
     telegram_enabled: bool
     preserve_top_level_non_images: bool = False
+    drift_alerts_enabled: bool = False
 
 
 def normalized_path(value: str) -> Path:
@@ -78,6 +79,7 @@ def validate_operator_settings(
     microscope_name: str = "Microscope",
     telegram_enabled: bool = False,
     preserve_top_level_non_images: bool = False,
+    drift_alerts_enabled: bool = False,
 ) -> OperatorSettings:
     microscope_name = microscope_name.strip()
     if not microscope_name:
@@ -137,6 +139,7 @@ def validate_operator_settings(
         microscope_name,
         telegram_enabled,
         preserve_top_level_non_images,
+        drift_alerts_enabled,
     )
 
 
@@ -148,6 +151,7 @@ def apply_operator_settings(
     transfer = config.setdefault("transfer", {})
     sms = config.setdefault("sms", {})
     telegram = config.setdefault("telegram", {})
+    drift_alerts = config.setdefault("drift_alerts", {})
     config["microscope_name"] = settings.microscope_name
     email["to_addresses"] = [settings.recipient]
     config["watch_folder"] = str(settings.watch_folder)
@@ -167,6 +171,10 @@ def apply_operator_settings(
     sms["enabled"] = settings.sms_enabled
     sms["to_number"] = settings.sms_to_number if settings.sms_enabled else ""
     telegram["enabled"] = settings.telegram_enabled
+    drift_alerts["enabled"] = settings.drift_alerts_enabled
+    drift_alerts.setdefault("log_filename", "strong_AF_drift_alert_log.txt")
+    drift_alerts.setdefault("poll_interval_seconds", 60)
+    drift_alerts.setdefault("missing_file_grace_seconds", None)
     return config
 
 
@@ -274,11 +282,15 @@ class MonitorWorker(threading.Thread):
             )
             next_acquisition = time.monotonic()
             next_transfer = time.monotonic() if self.config.transfer.enabled else float("inf")
+            next_drift = (
+                time.monotonic() if self.config.drift_alerts.enabled else float("inf")
+            )
             self.events.put(("started", None))
             while not self.stop_event.is_set():
                 current = time.monotonic()
                 acquisition_due = current >= next_acquisition
                 transfer_due = self.config.transfer.enabled and current >= next_transfer
+                drift_due = self.config.drift_alerts.enabled and current >= next_drift
                 if acquisition_due or transfer_due:
                     try:
                         watcher.check_once(acquisition_due, transfer_due)
@@ -292,12 +304,20 @@ class MonitorWorker(threading.Thread):
                         LOG.exception("Unexpected error during check; watcher will continue")
                         self.events.put(("warning", f"Check failed; MICWatcher will retry: {exc}"))
 
+                if drift_due:
+                    watcher.check_drift_alerts()
+                    self.emit_state(watcher)
+
                 current = time.monotonic()
+                if drift_due:
+                    next_drift = current + self.config.drift_alerts.poll_interval_seconds
                 if acquisition_due:
                     next_acquisition = current + self.config.check_interval_seconds
                 if transfer_due:
                     next_transfer = current + self.config.transfer.check_interval_seconds
-                wait_seconds = max(0.25, min(next_acquisition, next_transfer) - current)
+                wait_seconds = max(
+                    0.25, min(next_acquisition, next_transfer, next_drift) - current
+                )
                 self.stop_event.wait(wait_seconds)
         except Exception as exc:
             LOG.exception("MICWatcher could not start")
@@ -312,7 +332,7 @@ class MICWatcherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("MICWatcher")
-        self.root.minsize(720, 690)
+        self.root.minsize(720, 730)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.events: "queue.Queue[tuple[str, Any]]" = queue.Queue()
@@ -329,6 +349,7 @@ class MICWatcherApp:
         transfer = config.get("transfer", {})
         sms = config.get("sms", {})
         telegram = config.get("telegram", {})
+        drift_alerts = config.get("drift_alerts", {})
 
         self.recipient = tk.StringVar(value=recipient)
         self.microscope_name = tk.StringVar(
@@ -342,6 +363,9 @@ class MICWatcherApp:
         self.sms_to_number = tk.StringVar(value=str(sms.get("to_number", "")))
         self.telegram_enabled = tk.BooleanVar(
             value=bool(telegram.get("enabled", False))
+        )
+        self.drift_alerts_enabled = tk.BooleanVar(
+            value=bool(drift_alerts.get("enabled", False))
         )
         self.transfer_enabled = tk.BooleanVar(value=bool(transfer.get("enabled", False)))
         self.destination_folder = tk.StringVar(value="")
@@ -443,33 +467,41 @@ class MICWatcherApp:
         ttk.Label(form, text="minutes").grid(row=6, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(acquisition_entry)
 
+        drift_check = ttk.Checkbutton(
+            form,
+            text="Email me when the autofocus drift alert log reports a focus drift",
+            variable=self.drift_alerts_enabled,
+        )
+        drift_check.grid(row=7, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        self.form_widgets.append(drift_check)
+
         transfer_check = ttk.Checkbutton(
             form,
             text="Transfer stable files to a network folder",
             variable=self.transfer_enabled,
             command=self.update_transfer_controls,
         )
-        transfer_check.grid(row=7, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        transfer_check.grid(row=8, column=0, columnspan=3, sticky="w", pady=(10, 4))
         self.form_widgets.append(transfer_check)
 
         ttk.Label(form, text="Transfer destination").grid(
-            row=8, column=0, sticky="w", padx=(0, 10), pady=6
+            row=9, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.destination_entry = ttk.Entry(form, textvariable=self.destination_folder)
-        self.destination_entry.grid(row=8, column=1, sticky="ew", pady=6)
+        self.destination_entry.grid(row=9, column=1, sticky="ew", pady=6)
         self.destination_button = ttk.Button(
             form, text="Browse...", command=self.browse_destination
         )
-        self.destination_button.grid(row=8, column=2, padx=(8, 0), pady=6)
+        self.destination_button.grid(row=9, column=2, padx=(8, 0), pady=6)
         self.form_widgets.extend([self.destination_entry, self.destination_button])
 
         ttk.Label(form, text="Transfer check").grid(
-            row=9, column=0, sticky="w", padx=(0, 10), pady=6
+            row=10, column=0, sticky="w", padx=(0, 10), pady=6
         )
         self.transfer_entry = ttk.Entry(form, textvariable=self.transfer_minutes, width=12)
-        self.transfer_entry.grid(row=9, column=1, sticky="w", pady=6)
+        self.transfer_entry.grid(row=10, column=1, sticky="w", pady=6)
         self.transfer_unit = ttk.Label(form, text="minutes")
-        self.transfer_unit.grid(row=9, column=1, sticky="w", padx=(90, 0))
+        self.transfer_unit.grid(row=10, column=1, sticky="w", padx=(90, 0))
         self.form_widgets.append(self.transfer_entry)
 
         self.transfer_mode_check = ttk.Checkbutton(
@@ -478,7 +510,7 @@ class MICWatcherApp:
             variable=self.preserve_top_level_non_images,
         )
         self.transfer_mode_check.grid(
-            row=10, column=0, columnspan=3, sticky="w", pady=(4, 8)
+            row=11, column=0, columnspan=3, sticky="w", pady=(4, 8)
         )
         self.form_widgets.append(self.transfer_mode_check)
 
@@ -563,6 +595,7 @@ class MICWatcherApp:
                 self.microscope_name.get(),
                 self.telegram_enabled.get(),
                 self.preserve_top_level_non_images.get(),
+                self.drift_alerts_enabled.get(),
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Cannot start MICWatcher", str(exc), parent=self.root)

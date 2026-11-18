@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import smtplib
 import socket
@@ -27,6 +28,13 @@ from typing import Any, Callable, Iterable
 LOG = logging.getLogger("microscope_watcher")
 DEFAULT_CONFIG = "watcher_config.json"
 DEFAULT_STATE = "watcher_state.json"
+DRIFT_LOG_FILENAME = "strong_AF_drift_alert_log.txt"
+# One line of the Squid autofocus drift alert log:
+# YYYY-MM-DD HH:MM:SS | LEVEL | KIND | WHO | t=N | TEXT
+DRIFT_LINE = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| (INFO|ALERT|OK) \| ([A-Z_]+) \| "
+    r"(job|group \S+) \| t=(\d+) \| (.*)$"
+)
 COPY_BUFFER_BYTES = 1024 * 1024
 IMAGE_EXTENSIONS = {
     ".bmp", ".czi", ".dib", ".gif", ".heic", ".heif", ".j2c", ".j2k",
@@ -92,6 +100,20 @@ class TelegramConfig:
 
 
 @dataclass(frozen=True)
+class DriftAlertConfig:
+    """Optional email alerts from the autofocus drift alert log of the Squid jobs.
+
+    The log file is looked up directly in the watched folder (never recursively).
+    """
+
+    enabled: bool = False
+    log_filename: str = DRIFT_LOG_FILENAME
+    poll_interval_seconds: float = 60.0
+    # None means: use the acquisition check interval.
+    missing_file_grace_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     microscope_name: str
     watch_folder: Path
@@ -104,6 +126,7 @@ class Config:
     sms: SmsConfig
     telegram: TelegramConfig
     transfer: "TransferConfig"
+    drift_alerts: DriftAlertConfig = DriftAlertConfig()
 
 
 @dataclass(frozen=True)
@@ -179,6 +202,8 @@ def load_config(path: Path) -> Config:
     transfer = raw.get("transfer", {})
     sms = raw.get("sms", {})
     telegram = raw.get("telegram", {})
+    drift = raw.get("drift_alerts", {})
+    drift_grace_value = drift.get("missing_file_grace_seconds")
     transfer_enabled = bool(transfer.get("enabled", False))
     destination_value = str(transfer.get("destination_folder", "")).strip()
     batch_limit_value = transfer.get("max_files_per_check")
@@ -235,6 +260,16 @@ def load_config(path: Path) -> Config:
                 transfer.get("preserve_top_level_non_images", False)
             ),
         ),
+        drift_alerts=DriftAlertConfig(
+            enabled=bool(drift.get("enabled", False)),
+            log_filename=str(drift.get("log_filename", DRIFT_LOG_FILENAME)).strip(),
+            poll_interval_seconds=float(drift.get("poll_interval_seconds", 60)),
+            missing_file_grace_seconds=(
+                None
+                if drift_grace_value in {None, ""}
+                else float(drift_grace_value)
+            ),
+        ),
     )
     if result.check_interval_seconds <= 0:
         raise ValueError("check_interval_seconds must be greater than zero")
@@ -268,6 +303,17 @@ def load_config(path: Path) -> Config:
             )
         if result.telegram.timeout_seconds <= 0:
             raise ValueError("telegram.timeout_seconds must be greater than zero")
+    if result.drift_alerts.enabled:
+        name = result.drift_alerts.log_filename
+        if not name or Path(name).name != name:
+            raise ValueError(
+                "drift_alerts.log_filename must be a file name inside watch_folder"
+            )
+        if result.drift_alerts.poll_interval_seconds <= 0:
+            raise ValueError("drift_alerts.poll_interval_seconds must be greater than zero")
+        grace = result.drift_alerts.missing_file_grace_seconds
+        if grace is not None and grace < 0:
+            raise ValueError("drift_alerts.missing_file_grace_seconds cannot be negative")
     if result.transfer.enabled and result.transfer.destination_folder is None:
         raise ValueError("transfer.destination_folder is required when transfer is enabled")
     if result.transfer.stable_for_seconds < 0:
@@ -530,6 +576,137 @@ class Watcher:
                 "Failed to send Telegram warning to %s", self.config.telegram.chat_id
             )
             return False
+
+    def check_drift_alerts(self) -> None:
+        """Email new ALERT lines of the autofocus drift alert log (if enabled)."""
+        settings = self.config.drift_alerts
+        if not settings.enabled:
+            return
+        before = json.dumps(self.state, sort_keys=True, default=str)
+        try:
+            self._check_drift_alerts(settings)
+        except Exception:
+            LOG.exception("Drift alert check failed; it will be retried")
+        if json.dumps(self.state, sort_keys=True, default=str) != before:
+            save_state(self.config.state_file, self.state)
+
+    @staticmethod
+    def _complete_lines_size(path: Path) -> int:
+        """Size in bytes of the part of the file that ends in a newline."""
+        return path.read_bytes().rfind(b"\n") + 1
+
+    def _check_drift_alerts(self, settings: DriftAlertConfig) -> None:
+        now = self.clock()
+        path = self.config.watch_folder / settings.log_filename
+        state = self.state
+        exists = path.is_file()
+
+        if "drift_watch_started_at" not in state:
+            state["drift_watch_started_at"] = now.isoformat()
+            if exists:
+                # Content that was already there belongs to earlier jobs: never resend it.
+                state["drift_offset"] = self._complete_lines_size(path)
+                LOG.info("Drift alert log found at start; reading new lines only: %s", path)
+
+        if not exists:
+            if state.get("drift_missing_notified"):
+                return
+            started = parse_timestamp(state.get("drift_watch_started_at")) or now
+            grace = (
+                settings.missing_file_grace_seconds
+                if settings.missing_file_grace_seconds is not None
+                else self.config.check_interval_seconds
+            )
+            if (now - started).total_seconds() < grace:
+                return
+            subject = (
+                f"[WARNING] {self.config.microscope_name}: "
+                "no autofocus drift alert log found"
+            )
+            body = (
+                "Autofocus drift alerts are switched on, but the alert log file has not "
+                f"appeared in the watched folder.\n\n"
+                f"Folder: {self.config.watch_folder}\n"
+                f"Expected file: {settings.log_filename}\n"
+                f"Waiting since: {format_timestamp(started)}\n"
+                f"Checked at: {format_timestamp(now)}\n\n"
+                "Focus drift alerts will not arrive until this file exists. Check that "
+                "the Squid job 09 or 10 is running and saves into the watched folder.\n"
+                "This notice is sent only once."
+            )
+            if self._send(subject, body):
+                state["drift_missing_notified"] = True
+            return
+
+        size = path.stat().st_size
+        offset = int(state.get("drift_offset", 0))
+        if size < offset:
+            LOG.warning("Drift alert log is smaller than before; reading it from the start")
+            offset = 0
+            state["drift_open_alerts"] = {}
+        if size == offset:
+            return
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            data = handle.read()
+        complete = data.rfind(b"\n") + 1          # a half-written last line waits
+        if complete == 0:
+            return
+
+        open_alerts: dict[str, str] = dict(state.get("drift_open_alerts", {}))
+        last_start = state.get("drift_last_start")
+        new_alerts: list[tuple[str, str, str, str]] = []
+        for line in data[:complete].decode("utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            match = DRIFT_LINE.match(line)
+            if match is None:
+                LOG.warning("Unrecognized line in %s: %s", settings.log_filename, line)
+                continue
+            stamp, level, kind, who, _t, _text = match.groups()
+            key = f"{who} | {kind}"
+            if level == "ALERT":
+                # One email per open alert; repeated reminder lines are ignored.
+                if key not in open_alerts:
+                    new_alerts.append((stamp, who, kind, line))
+                    open_alerts[key] = stamp
+            elif level == "OK":
+                open_alerts.pop(key, None)
+            elif kind == "START":
+                last_start = stamp
+                open_alerts.clear()
+
+        if new_alerts:
+            groups = sorted({who for _, who, _, _ in new_alerts})
+            if len(new_alerts) == 1:
+                _, who, kind, line = new_alerts[0]
+                match = DRIFT_LINE.match(line)
+                subject = (
+                    f"[FOCUS DRIFT] {self.config.microscope_name}: "
+                    f"{who}, {kind}, t={match.group(5) if match else '?'}"
+                )
+            else:
+                subject = (
+                    f"[FOCUS DRIFT] {self.config.microscope_name}: "
+                    f"{len(new_alerts)} new alerts ({', '.join(groups)})"
+                )
+            body = (
+                f"The autofocus drift alert log of {self.config.microscope_name} "
+                "reports a focus drift.\n\n"
+                + "\n".join(line for _, _, _, line in new_alerts)
+                + f"\n\nFolder: {self.config.watch_folder}\n"
+                f"Alert log: {settings.log_filename}\n"
+                f"Job started: {last_start or 'unknown'}\n"
+                f"Open alerts: {', '.join(sorted(open_alerts)) or 'none'}\n\n"
+                "Each alert is emailed once. A new email is sent only when a different "
+                "group or alert type is affected, or after the alert was closed by an OK line."
+            )
+            if not self._send(subject, body):
+                return                              # offset not advanced: retried next time
+        state["drift_offset"] = offset + complete
+        state["drift_open_alerts"] = open_alerts
+        if last_start:
+            state["drift_last_start"] = last_start
 
     def _is_activity(self, snapshot: FolderSnapshot) -> bool:
         old_count = self.state.get("file_count")
@@ -1085,9 +1262,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     next_acquisition_check = time.monotonic()
     next_transfer_check = time.monotonic() if config.transfer.enabled else float("inf")
+    next_drift_check = time.monotonic() if config.drift_alerts.enabled else float("inf")
     while True:
         current = time.monotonic()
         acquisition_due = current >= next_acquisition_check
+        drift_due = config.drift_alerts.enabled and current >= next_drift_check
         transfer_due = config.transfer.enabled and current >= next_transfer_check
         try:
             if acquisition_due or transfer_due:
@@ -1097,13 +1276,23 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         except Exception:
             LOG.exception("Unexpected error during check; watcher will continue")
+        if drift_due:
+            watcher.check_drift_alerts()
         current = time.monotonic()
+        if drift_due:
+            next_drift_check = current + config.drift_alerts.poll_interval_seconds
         if acquisition_due:
             next_acquisition_check = current + config.check_interval_seconds
         if transfer_due:
             next_transfer_check = current + config.transfer.check_interval_seconds
         try:
-            time.sleep(max(1.0, min(next_acquisition_check, next_transfer_check) - current))
+            time.sleep(
+                max(
+                    1.0,
+                    min(next_acquisition_check, next_transfer_check, next_drift_check)
+                    - current,
+                )
+            )
         except KeyboardInterrupt:
             LOG.info("Watcher stopped")
             return 0

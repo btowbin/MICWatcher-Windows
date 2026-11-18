@@ -31,6 +31,12 @@
     "chat_id": "@your_channel_username",
     "timeout_seconds": 30
   },
+  "drift_alerts": {
+    "enabled": false,
+    "log_filename": "strong_AF_drift_alert_log.txt",
+    "poll_interval_seconds": 60,
+    "missing_file_grace_seconds": null
+  },
   "email": {
     "smtp_host": "smtp.gmail.com",
     "smtp_port": 587,
